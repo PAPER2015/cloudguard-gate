@@ -56,7 +56,7 @@ def covers_admin_ports(body):
         end = int(body.get("to_port"))
     except (TypeError, ValueError):
         return False
-    return any(start <= port <= end for port in (22, 3389))
+    return any(start <= port <= end for port in (2222, 3389))
 
 
 def is_literal_secret(value):
