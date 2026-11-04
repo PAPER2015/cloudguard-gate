@@ -1,12 +1,98 @@
 {
-  "safe/01_aws_s3_private.tf":         {"status": "PASS",  "rules": []},
-  "safe/02_aws_sg_office_ssh.tf":      {"status": "PASS",  "rules": []},
-  "safe/03_azure_sql_secure.tf":       {"status": "PASS",  "rules": []},
-  "safe/04_gcp_iam_viewer.tf":         {"status": "PASS",  "rules": []},
-  "safe/05_aws_s3_policy_specific.tf": {"status": "PASS",  "rules": []},
-  "safe/06_gcp_storage_private.tf":    {"status": "PASS",  "rules": []},
-  "risky/07_aws_sg_ssh_open.tf":       {"status": "BLOCK", "rules": ["AWS_PUBLIC_ADMIN_PORT"]},
-  "risky/08_azure_sql_hardcoded.tf":   {"status": "BLOCK", "rules": ["AZURE_HARDCODED_PASSWORD", "AZURE_OLD_TLS", "AZURE_WIDE_FIREWALL"]},
-  "risky/09_gcp_owner_and_key.tf":     {"status": "BLOCK", "rules": ["GCP_PROJECT_OWNER", "GCP_SERVICE_ACCOUNT_KEY"]},
-  "risky/10_aws_s3_public.tf":         {"status": "BLOCK", "rules": ["AWS_S3_PUBLIC_BLOCK_OFF", "AWS_S3_WILDCARD_PRINCIPAL"]}
+  "error/25_syntax_error.tf": {
+    "status": "ERROR",
+    "rules": []
+  },
+  "review/22_aws_port_variable.tf": {
+    "status": "REVIEW",
+    "rules": [
+      "AWS_ADMIN_PORT_UNRESOLVED"
+    ]
+  },
+  "review/27_aws_bucket_no_block.tf": {
+    "status": "REVIEW",
+    "rules": [
+      "AWS_S3_NO_PUBLIC_BLOCK"
+    ]
+  },
+  "review/28_aws_s3_flag_variable.tf": {
+    "status": "REVIEW",
+    "rules": [
+      "AWS_S3_BLOCK_UNRESOLVED"
+    ]
+  },
+  "review/29_aws_s3_policy_expression.tf": {
+    "status": "REVIEW",
+    "rules": [
+      "AWS_S3_POLICY_UNRESOLVED"
+    ]
+  },
+  "review/31_aws_s3_invalid_policy_json.tf": {
+    "status": "REVIEW",
+    "rules": [
+      "AWS_S3_POLICY_UNRESOLVED"
+    ]
+  },
+  "risky/07_aws_sg_ssh_open.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "AWS_PUBLIC_ADMIN_PORT"
+    ]
+  },
+  "risky/08_azure_sql_hardcoded.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "AZURE_HARDCODED_PASSWORD",
+      "AZURE_OLD_TLS",
+      "AZURE_WIDE_FIREWALL"
+    ]
+  },
+  "risky/09_gcp_owner_and_key.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "GCP_PROJECT_OWNER",
+      "GCP_SERVICE_ACCOUNT_KEY"
+    ]
+  },
+  "risky/10_aws_s3_public.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "AWS_S3_PUBLIC_BLOCK_OFF",
+      "AWS_S3_WILDCARD_PRINCIPAL"
+    ]
+  },
+  "risky/30_aws_s3_allow_list_wildcard.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "AWS_S3_WILDCARD_PRINCIPAL"
+    ]
+  },
+  "safe/01_aws_s3_private.tf": {
+    "status": "PASS",
+    "rules": []
+  },
+  "safe/02_aws_sg_office_ssh.tf": {
+    "status": "PASS",
+    "rules": []
+  },
+  "safe/03_azure_sql_secure.tf": {
+    "status": "PASS",
+    "rules": []
+  },
+  "safe/04_gcp_iam_viewer.tf": {
+    "status": "PASS",
+    "rules": []
+  },
+  "safe/05_aws_s3_policy_specific.tf": {
+    "status": "PASS",
+    "rules": []
+  },
+  "safe/06_gcp_storage_private.tf": {
+    "status": "PASS",
+    "rules": []
+  },
+  "safe/26_aws_s3_deny_insecure.tf": {
+    "status": "PASS",
+    "rules": []
+  }
 }
