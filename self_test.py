@@ -9,6 +9,7 @@
   자가 점검이 실패하면 게이트 전체를 멈춥니다.
 
 정답표: samples/expected.json  (파일별 기대 결과와 걸려야 하는 규칙)
+        기대 결과: PASS / REVIEW / BLOCK / ERROR (v3 PR 2부터 REVIEW·ERROR 예시 포함)
 
 실행:  py self_test.py
 종료 코드: 0 = 정답표와 모두 일치 / 1 = 하나라도 불일치 (검사기 고장으로 판단)
@@ -19,7 +20,7 @@ import os
 import sys
 from pathlib import Path
 
-from policy_gate import scan_file
+from policy_gate import file_status, scan_file
 
 SAMPLES = Path(__file__).parent / "samples"
 EXPECTED_FILE = SAMPLES / "expected.json"
@@ -40,7 +41,7 @@ def run_one(path):
     except Exception as exc:
         return "ERROR", [], f"{type(exc).__name__}: {exc}"
     rules = sorted({f["rule"] for f in findings})
-    return ("BLOCK" if findings else "PASS"), rules, None
+    return file_status(findings), rules, None  # PASS / REVIEW / BLOCK (policy_gate.py와 같은 기준)
 
 
 def main():
