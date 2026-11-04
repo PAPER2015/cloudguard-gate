@@ -1,12 +1,13 @@
 """Educational Terraform policy gate (AWS/Azure/GCP).
 
 Usage:
-  py -m pip install python-hcl2
-  py policy_gate.py examples
-  py policy_gate.py test_tf --json results.json
+  py -m pip install -r requirements.txt     (python-hcl2==7.3.1)
+  py policy_gate.py infra --json results.json
 
 This is a *starter* static checker. PASS means only these selected demo rules
 passed, not that a Terraform configuration is production secure.
+
+v3 PR 1: 결과에 cloud / policy / checks 정보를 추가했다. 판정(PASS/BLOCK)은 v2와 같다.
 """
 
 import argparse
@@ -14,6 +15,49 @@ import json
 import re
 import sys
 from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# 규칙 메타데이터 (v3)
+#   - cloud : 이 규칙이 속한 클라우드 (aws / azure / gcp)
+#   - policy: 공통 보안 정책 ID. 공통 정책에 속하지 않는 "클라우드 고유 정책"은 None
+# 새 규칙을 추가할 때는 이 표에도 한 줄을 추가한다.
+# ---------------------------------------------------------------------------
+
+POLICY_NAMES = {
+    "CG-NET-01": "관리자 포트 인터넷 공개 금지",
+    "CG-STO-01": "저장소 공개 금지",
+}
+
+RULES = {
+    "AWS_PUBLIC_ADMIN_PORT":     {"cloud": "aws",   "policy": "CG-NET-01"},
+    "AWS_S3_PUBLIC_BLOCK_OFF":   {"cloud": "aws",   "policy": "CG-STO-01"},
+    "AWS_S3_WILDCARD_PRINCIPAL": {"cloud": "aws",   "policy": "CG-STO-01"},
+    "AZURE_HARDCODED_PASSWORD":  {"cloud": "azure", "policy": None},
+    "AZURE_WIDE_FIREWALL":       {"cloud": "azure", "policy": None},
+    "AZURE_OLD_TLS":             {"cloud": "azure", "policy": None},
+    "GCP_PROJECT_OWNER":         {"cloud": "gcp",   "policy": None},
+    "GCP_SERVICE_ACCOUNT_KEY":   {"cloud": "gcp",   "policy": None},
+}
+
+# 공통 정책별로 "현재 검사기가 실제로 검사하는" 자원 종류.
+# 여기 있는 자원은 위반이 없어도 checks 목록에 PASS로 기록된다.
+# (Azure·GCP 자원은 PR 3~6에서 규칙과 함께 추가한다.)
+POLICY_TARGETS = {
+    ("CG-NET-01", "aws"): {"aws_security_group", "aws_vpc_security_group_ingress_rule"},
+    ("CG-STO-01", "aws"): {"aws_s3_bucket_public_access_block", "aws_s3_bucket_policy"},
+}
+
+
+def cloud_of(resource_type):
+    """자원 종류 이름의 앞부분으로 클라우드를 구분한다."""
+    if resource_type.startswith("aws_"):
+        return "aws"
+    if resource_type.startswith("azurerm_"):
+        return "azure"
+    if resource_type.startswith("google_"):
+        return "gcp"
+    return "other"
 
 
 def blocks(value):
@@ -74,7 +118,9 @@ def scan_configuration(data):
     findings = []
 
     def add(rule, resource, reason):
-        findings.append({"rule": rule, "resource": resource, "reason": reason})
+        meta = RULES[rule]
+        findings.append({"rule": rule, "resource": resource, "reason": reason,
+                         "cloud": meta["cloud"], "policy": meta["policy"]})
 
     for typ, name, body in resources(data):
         ref = f"{typ}.{name}"
@@ -136,11 +182,41 @@ def scan_configuration(data):
     return findings
 
 
-def scan_file(path):
-    import hcl2  # Installation: py -m pip install python-hcl2
+def build_checks(data, findings):
+    """공통 정책의 검사 대상 자원마다 "검사했음" 기록을 만든다.
+
+    위반이 있으면 BLOCK, 없으면 PASS. 이 기록이 있어야 나중에
+    "검사 대상 없음(N/A)"과 "검사했고 문제 없음(PASS)"을 구분할 수 있다.
+    """
+    blocked = {(f["resource"], f["policy"]) for f in findings if f["policy"]}
+    checks = []
+    for typ, name, _body in resources(data):
+        ref = f"{typ}.{name}"
+        cloud = cloud_of(typ)
+        for (policy, target_cloud), target_types in POLICY_TARGETS.items():
+            if cloud == target_cloud and typ in target_types:
+                status = "BLOCK" if (ref, policy) in blocked else "PASS"
+                checks.append({"resource": ref, "cloud": cloud,
+                               "policy": policy, "status": status})
+    return checks
+
+
+def load_tf(path):
+    import hcl2  # Installation: py -m pip install -r requirements.txt
     with path.open("r", encoding="utf-8") as f:
-        data = hcl2.load(f)
-    return scan_configuration(data)
+        return hcl2.load(f)
+
+
+def scan_file(path):
+    """파일 1개의 위반 목록 (self_test.py도 이 함수를 사용한다)."""
+    return scan_configuration(load_tf(path))
+
+
+def scan_file_detail(path):
+    """파일 1개의 (위반 목록, 검사 기록)."""
+    data = load_tf(path)
+    findings = scan_configuration(data)
+    return findings, build_checks(data, findings)
 
 
 def main():
@@ -166,18 +242,19 @@ def main():
     results = []
     for path in tf_files:
         try:
-            findings = scan_file(path)
+            findings, checks = scan_file_detail(path)
             status = "BLOCK" if findings else "PASS"
             error = None
         except Exception as exc:
-            findings = []
+            findings, checks = [], []
             status = "ERROR"  # Fail closed: parse errors must never be a PASS.
             error = f"{type(exc).__name__}: {exc}"
         results.append({"file": str(path), "status": status,
-                        "findings": findings, "error": error})
+                        "findings": findings, "checks": checks, "error": error})
         print(f"[{status}] {path}")
         for finding in findings:
-            print(f"   - {finding['rule']}: {finding['reason']}")
+            tag = finding["cloud"] + (f"/{finding['policy']}" if finding["policy"] else "")
+            print(f"   - {finding['rule']} [{tag}]: {finding['reason']}")
         if error:
             print(f"   - 분석 오류: {error}")
 
