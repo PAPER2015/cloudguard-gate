@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 from policy_gate import file_status, scan_file
+from summary import md_cell  # 표 칸 안의 줄바꿈·| 를 안전하게 표시 (v3 PR 3)
 
 SAMPLES = Path(__file__).parent / "samples"
 EXPECTED_FILE = SAMPLES / "expected.json"
@@ -90,7 +91,7 @@ def main():
             out.write(f"python-hcl2 {parser_version()} | 예시 {len(rows)}개 중 {passed}개 일치\n\n")
             out.write("| 예시 파일 | 기대 | 실제 | 일치 | 설명 |\n|---|---|---|---|---|\n")
             for name, exp, act, ok, note in rows:
-                out.write(f"| {name} | {exp} | {act} | {'✅' if ok else '❌'} | {note or '-'} |\n")
+                out.write(f"| {md_cell(name)} | {exp} | {act} | {'✅' if ok else '❌'} | {md_cell(note or '-')} |\n")
             out.write("\n")
 
     return 0 if all_ok else 1
