@@ -39,6 +39,12 @@
       "AWS_S3_POLICY_UNRESOLVED"
     ]
   },
+  "review/35_gcp_regional_policy_address_group.tf": {
+    "status": "REVIEW",
+    "rules": [
+      "GCP_FIREWALL_POLICY_UNRESOLVED"
+    ]
+  },
   "risky/07_aws_sg_ssh_open.tf": {
     "status": "BLOCK",
     "rules": [
@@ -79,10 +85,34 @@
       "AZURE_PUBLIC_ADMIN_PORT"
     ]
   },
+  "risky/16_gcp_fw_ssh_open.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "GCP_PUBLIC_ADMIN_PORT"
+    ]
+  },
+  "risky/17_gcp_fw_all_ports.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "GCP_PUBLIC_ADMIN_PORT"
+    ]
+  },
   "risky/30_aws_s3_allow_list_wildcard.tf": {
     "status": "BLOCK",
     "rules": [
       "AWS_S3_WILDCARD_PRINCIPAL"
+    ]
+  },
+  "risky/33_gcp_hierarchical_policy_ssh.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "GCP_FIREWALL_POLICY_PUBLIC_ADMIN_PORT"
+    ]
+  },
+  "risky/34_gcp_network_policy_rdp.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "GCP_FIREWALL_POLICY_PUBLIC_ADMIN_PORT"
     ]
   },
   "safe/01_aws_s3_private.tf": {
@@ -117,7 +147,15 @@
     "status": "PASS",
     "rules": []
   },
+  "safe/15_gcp_fw_office_ssh.tf": {
+    "status": "PASS",
+    "rules": []
+  },
   "safe/26_aws_s3_deny_insecure.tf": {
+    "status": "PASS",
+    "rules": []
+  },
+  "safe/32_gcp_policy_deny_admin.tf": {
     "status": "PASS",
     "rules": []
   }
