@@ -9,6 +9,12 @@
       "AWS_ADMIN_PORT_UNRESOLVED"
     ]
   },
+  "review/23_azure_nsg_source_variable.tf": {
+    "status": "REVIEW",
+    "rules": [
+      "AZURE_ADMIN_PORT_UNRESOLVED"
+    ]
+  },
   "review/27_aws_bucket_no_block.tf": {
     "status": "REVIEW",
     "rules": [
@@ -61,6 +67,18 @@
       "AWS_S3_WILDCARD_PRINCIPAL"
     ]
   },
+  "risky/13_azure_nsg_rdp_open.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "AZURE_PUBLIC_ADMIN_PORT"
+    ]
+  },
+  "risky/14_azure_nsg_range_open.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "AZURE_PUBLIC_ADMIN_PORT"
+    ]
+  },
   "risky/30_aws_s3_allow_list_wildcard.tf": {
     "status": "BLOCK",
     "rules": [
@@ -88,6 +106,14 @@
     "rules": []
   },
   "safe/06_gcp_storage_private.tf": {
+    "status": "PASS",
+    "rules": []
+  },
+  "safe/11_azure_nsg_office_ssh.tf": {
+    "status": "PASS",
+    "rules": []
+  },
+  "safe/12_azure_nsg_inline_https.tf": {
     "status": "PASS",
     "rules": []
   },

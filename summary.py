@@ -4,11 +4,23 @@ GitHub Actions에서는 이 출력이 실행 결과 화면의 "Summary"에 표�
 내 PC에서 확인:  py summary.py results.json
 
 v3 PR 2: REVIEW(검토 필요) 표시 추가. REVIEW도 배포 차단으로 표시합니다.
+v3 PR 3: 표 칸 안의 줄바꿈·| 문자 때문에 Markdown 표가 깨지던 문제 수정 (내용은 그대로).
 """
 
 import json
 import sys
 from pathlib import Path
+
+def md_cell(value):
+    """Markdown 표 칸 하나에 안전하게 넣는다. 내용은 바꾸지 않고 표기만 바꾼다.
+
+    - | 는 \\| 로 (표의 칸 구분선으로 오해되지 않게)
+    - 줄바꿈은 <br> 로 (한 줄이 표의 한 행이 되도록)
+    """
+    text = str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
+    text = text.replace("|", "\\|")
+    return "<br>".join(line.strip() for line in text.split("\n")).strip() or "-"
+
 
 ICON = {"PASS": "✅ PASS", "REVIEW": "🔍 REVIEW", "BLOCK": "⛔ BLOCK", "ERROR": "⚠️ ERROR"}
 
@@ -40,10 +52,10 @@ def main():
         if r["findings"]:
             for f in r["findings"]:
                 verdict = f.get("verdict", r["status"])
-                print(f"| {r['file']} | {ICON[verdict]} | {f['rule']} | {f['reason']} |")
+                print(f"| {md_cell(r['file'])} | {ICON[verdict]} | {md_cell(f['rule'])} | {md_cell(f['reason'])} |")
         else:
             reason = r.get("error") or "-"
-            print(f"| {r['file']} | {ICON[r['status']]} | - | {reason} |")
+            print(f"| {md_cell(r['file'])} | {ICON[r['status']]} | - | {md_cell(reason)} |")
     return 0
 
 

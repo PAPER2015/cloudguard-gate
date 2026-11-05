@@ -12,6 +12,8 @@ v3 PR 2: REVIEW(검토 필요) 판정을 추가했다.
   - 값이 변수·표현식이라 안전한지 확인할 수 없으면 PASS가 아니라 REVIEW
   - REVIEW도 배포를 막는다 (종료 코드 1)
   - 파일 판정 우선순위: ERROR > BLOCK > REVIEW > PASS
+v3 PR 3: 공통 정책 CG-NET-01(관리자 포트 인터넷 공개 금지)을 Azure NSG에도 적용했다.
+  - azurerm_network_security_rule, azurerm_network_security_group 내부 security_rule
 """
 
 import argparse
@@ -42,6 +44,8 @@ RULES = {
     "AWS_S3_WILDCARD_PRINCIPAL": {"cloud": "aws",   "policy": "CG-STO-01", "verdict": "BLOCK"},
     "AWS_S3_POLICY_UNRESOLVED":   {"cloud": "aws",   "policy": "CG-STO-01", "verdict": "REVIEW"},
     "AWS_S3_NO_PUBLIC_BLOCK":    {"cloud": "aws",   "policy": "CG-STO-01", "verdict": "REVIEW"},
+    "AZURE_PUBLIC_ADMIN_PORT":   {"cloud": "azure", "policy": "CG-NET-01", "verdict": "BLOCK"},
+    "AZURE_ADMIN_PORT_UNRESOLVED": {"cloud": "azure", "policy": "CG-NET-01", "verdict": "REVIEW"},
     "AZURE_HARDCODED_PASSWORD":  {"cloud": "azure", "policy": None,        "verdict": "BLOCK"},
     "AZURE_WIDE_FIREWALL":       {"cloud": "azure", "policy": None,        "verdict": "BLOCK"},
     "AZURE_OLD_TLS":             {"cloud": "azure", "policy": None,        "verdict": "BLOCK"},
@@ -51,9 +55,10 @@ RULES = {
 
 # 공통 정책별로 "현재 검사기가 실제로 검사하는" 자원 종류.
 # 여기 있는 자원은 위반이 없어도 checks 목록에 PASS로 기록된다.
-# (Azure·GCP 자원은 PR 3~6에서 규칙과 함께 추가한다.)
+# (GCP 자원과 Azure 저장소는 PR 4~6에서 규칙과 함께 추가한다.)
 POLICY_TARGETS = {
     ("CG-NET-01", "aws"): {"aws_security_group", "aws_vpc_security_group_ingress_rule"},
+    ("CG-NET-01", "azure"): {"azurerm_network_security_rule", "azurerm_network_security_group"},
     ("CG-STO-01", "aws"): {"aws_s3_bucket", "aws_s3_bucket_public_access_block", "aws_s3_bucket_policy"},
 }
 
@@ -284,6 +289,100 @@ def evaluate_s3_policy(raw):
 
 
 # ---------------------------------------------------------------------------
+# Azure NSG 규칙 판정 도우미 (v3 PR 3, CG-NET-01)
+# 조건 5개를 각각 예(True) / 아니오(False) / 모름(None)으로 본다.
+#   - 하나라도 아니오 → 안전 (PASS)
+#   - 모두 예        → 위반 (BLOCK)
+#   - 그 외          → 판단 불가 (REVIEW)
+# Azure 값(Inbound, Allow, Tcp, Internet)은 대소문자를 구분하지 않는다.
+# ---------------------------------------------------------------------------
+
+AZURE_PUBLIC_SOURCES = {"*", "internet", "0.0.0.0/0", "::/0"}
+ADMIN_PORTS = (22, 3389)
+
+
+def text_state(value, yes, no):
+    """문자열 값이 yes 목록이면 True, no 목록이면 False, 그 외(생략·변수·처음 보는 값)는 None."""
+    if value is None or is_unresolved(value):
+        return None
+    text = string_value(value).lower()
+    if text in yes:
+        return True
+    if text in no:
+        return False
+    return None
+
+
+def as_items(value):
+    """한 개 값이든 목록이든 목록으로 바꾼다. 생략(None)이면 빈 목록."""
+    if value is None:
+        return []
+    return list(value) if isinstance(value, list) else [value]
+
+
+def azure_source_public(rule):
+    """출발지가 인터넷 전체인가? (source_address_prefix / source_address_prefixes)"""
+    values = as_items(rule.get("source_address_prefix")) + as_items(rule.get("source_address_prefixes"))
+    if not values:
+        # 출발지 주소 대신 특정 VM 그룹(ASG)만 지정했다면 인터넷 전체가 아니다.
+        return False if rule.get("source_application_security_group_ids") else None
+    if any(not is_unresolved(v) and string_value(v).lower() in AZURE_PUBLIC_SOURCES for v in values):
+        return True
+    if any(is_unresolved(v) for v in values):
+        return None
+    return False
+
+
+def port_spec_covers_admin(spec):
+    """Azure 포트 표기 1개가 22/3389를 포함하는가? "22", "20-30", "*", 22(숫자)."""
+    if isinstance(spec, bool) or spec is None or is_unresolved(spec):
+        return None
+    if isinstance(spec, int):
+        return spec in ADMIN_PORTS if 0 <= spec <= 65535 else None
+    text = string_value(spec).strip()
+    if text == "*":
+        return True
+    match = re.fullmatch(r"(\d+)\s*-\s*(\d+)", text)
+    if match:
+        start, end = int(match.group(1)), int(match.group(2))
+        if not (0 <= start <= end <= 65535):
+            return None  # 잘못된 범위(예: 30-20, 70000) → 판단 불가
+        return any(start <= port <= end for port in ADMIN_PORTS)
+    if text.isdigit():
+        port = int(text)
+        return port in ADMIN_PORTS if port <= 65535 else None
+    return None  # 처음 보는 표기 → 판단 불가
+
+
+def azure_ports_cover_admin(rule):
+    """목적지 포트가 관리자 포트를 포함하는가? (destination_port_range / destination_port_ranges)"""
+    values = as_items(rule.get("destination_port_range")) + as_items(rule.get("destination_port_ranges"))
+    if not values:
+        return None
+    results = [port_spec_covers_admin(v) for v in values]
+    if True in results:
+        return True
+    if None in results:
+        return None
+    return False
+
+
+def evaluate_azure_rule(rule):
+    """NSG 규칙 1개 → ('BLOCK'|'REVIEW'|'PASS', 확인 못 한 항목 목록)."""
+    conditions = {
+        "direction": text_state(rule.get("direction"), {"inbound"}, {"outbound"}),
+        "access": text_state(rule.get("access"), {"allow"}, {"deny"}),
+        "protocol": text_state(rule.get("protocol"), {"tcp", "*"}, {"udp", "icmp", "esp", "ah"}),
+        "출발지": azure_source_public(rule),
+        "목적지 포트": azure_ports_cover_admin(rule),
+    }
+    if False in conditions.values():
+        return "PASS", []
+    unknown = [name for name, state in conditions.items() if state is None]
+    return ("REVIEW", unknown) if unknown else ("BLOCK", [])
+
+
+# ---------------------------------------------------------------------------
 # 검사 규칙
 # ---------------------------------------------------------------------------
 
@@ -310,6 +409,16 @@ def scan_configuration(data, s3_links=None):
         else:
             add("AWS_ADMIN_PORT_UNRESOLVED", ref,
                 "출발지·포트·프로토콜 중 변수·표현식 값이 있어 관리자 포트 공개 여부를 확인할 수 없음 (검토 필요)")
+
+    def check_azure_rule(ref, rule, where):
+        verdict, unknown = evaluate_azure_rule(rule)
+        if verdict == "BLOCK":
+            add("AZURE_PUBLIC_ADMIN_PORT", ref,
+                "인터넷 전체에서 SSH(22) 또는 RDP(3389) 인바운드 허용" + where)
+        elif verdict == "REVIEW":
+            add("AZURE_ADMIN_PORT_UNRESOLVED", ref,
+                "값을 확인할 수 없어 관리자 포트 공개 여부를 판단할 수 없음: "
+                + ", ".join(unknown) + where + " (검토 필요)")
 
     for typ, name, body in resources(data):
         ref = f"{typ}.{name}"
@@ -347,6 +456,31 @@ def scan_configuration(data, s3_links=None):
                                  ingress.get("cidr_blocks"), ingress.get("ipv6_cidr_blocks"))
         if typ == "aws_vpc_security_group_ingress_rule":
             check_admin_port(ref, body, body.get("cidr_ipv4"), body.get("cidr_ipv6"))
+
+        # Azure NSG allows public SSH/RDP (CG-NET-01).
+        if typ == "azurerm_network_security_rule":
+            check_azure_rule(ref, body, "")
+        if typ == "azurerm_network_security_group":
+            inline_rules = body.get("security_rule")
+            # security_rule 블록 안의 개별 변수는 아래 check_azure_rule이
+            # 5개 위험 조건을 따로 판단한다. 목록 전체가 불투명한 표현식일 때만
+            # 여기서 REVIEW를 추가한다 (중복/과잉 차단 방지).
+            opaque_rule = (
+                inline_rules is not None
+                and (not isinstance(inline_rules, (list, dict))
+                     or (isinstance(inline_rules, list)
+                         and any(not isinstance(item, dict) for item in inline_rules)))
+            )
+            if opaque_rule:
+                add("AZURE_ADMIN_PORT_UNRESOLVED", ref,
+                    "security_rule 전체가 변수·표현식이라 관리자 포트 공개 여부를 확인할 수 없음 (검토 필요)")
+            for index, rule in enumerate(blocks(inline_rules), start=1):
+                label = string_value(rule.get("name", f"{index}번째"))
+                check_azure_rule(ref, rule, f" (내부 규칙 '{label}')")
+            for dyn in blocks(body.get("dynamic", [])):
+                if "security_rule" in dyn:
+                    add("AZURE_ADMIN_PORT_UNRESOLVED", ref,
+                        "dynamic \"security_rule\" 블록은 지원하지 않아 규칙 내용을 확인할 수 없음 (검토 필요)")
 
         # Azure DB server passwords written as literal Terraform strings.
         if typ.startswith("azurerm_"):
