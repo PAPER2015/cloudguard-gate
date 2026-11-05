@@ -14,6 +14,8 @@ v3 PR 2: REVIEW(검토 필요) 판정을 추가했다.
   - 파일 판정 우선순위: ERROR > BLOCK > REVIEW > PASS
 v3 PR 3: 공통 정책 CG-NET-01(관리자 포트 인터넷 공개 금지)을 Azure NSG에도 적용했다.
   - azurerm_network_security_rule, azurerm_network_security_group 내부 security_rule
+v3 PR 4: CG-NET-01을 GCP 방화벽(google_compute_firewall)에도 적용했다. → AWS·Azure·GCP 세 클라우드 공통
+v3 PR 4 보완: 3종 GCP 방화벽 정책 규칙의 단순 설정 검사 및 복잡한 설정 REVIEW 처리.
 """
 
 import argparse
@@ -49,16 +51,26 @@ RULES = {
     "AZURE_HARDCODED_PASSWORD":  {"cloud": "azure", "policy": None,        "verdict": "BLOCK"},
     "AZURE_WIDE_FIREWALL":       {"cloud": "azure", "policy": None,        "verdict": "BLOCK"},
     "AZURE_OLD_TLS":             {"cloud": "azure", "policy": None,        "verdict": "BLOCK"},
+    "GCP_PUBLIC_ADMIN_PORT":     {"cloud": "gcp",   "policy": "CG-NET-01", "verdict": "BLOCK"},
+    "GCP_ADMIN_PORT_UNRESOLVED": {"cloud": "gcp",   "policy": "CG-NET-01", "verdict": "REVIEW"},
+    "GCP_FIREWALL_POLICY_PUBLIC_ADMIN_PORT": {"cloud": "gcp", "policy": "CG-NET-01", "verdict": "BLOCK"},
+    "GCP_FIREWALL_POLICY_UNRESOLVED": {"cloud": "gcp", "policy": "CG-NET-01", "verdict": "REVIEW"},
     "GCP_PROJECT_OWNER":         {"cloud": "gcp",   "policy": None,        "verdict": "BLOCK"},
     "GCP_SERVICE_ACCOUNT_KEY":   {"cloud": "gcp",   "policy": None,        "verdict": "BLOCK"},
 }
 
 # 공통 정책별로 "현재 검사기가 실제로 검사하는" 자원 종류.
 # 여기 있는 자원은 위반이 없어도 checks 목록에 PASS로 기록된다.
-# (GCP 자원과 Azure 저장소는 PR 4~6에서 규칙과 함께 추가한다.)
+# (Azure·GCP 저장소는 PR 5~6에서 규칙과 함께 추가한다.)
 POLICY_TARGETS = {
     ("CG-NET-01", "aws"): {"aws_security_group", "aws_vpc_security_group_ingress_rule"},
     ("CG-NET-01", "azure"): {"azurerm_network_security_rule", "azurerm_network_security_group"},
+    ("CG-NET-01", "gcp"): {
+        "google_compute_firewall",
+        "google_compute_firewall_policy_rule",
+        "google_compute_network_firewall_policy_rule",
+        "google_compute_region_network_firewall_policy_rule",
+    },
     ("CG-STO-01", "aws"): {"aws_s3_bucket", "aws_s3_bucket_public_access_block", "aws_s3_bucket_policy"},
 }
 
@@ -383,6 +395,231 @@ def evaluate_azure_rule(rule):
 
 
 # ---------------------------------------------------------------------------
+# GCP 방화벽 판정 도우미 (v3 PR 4, CG-NET-01)
+# google_compute_firewall 하나를 조건 4개로 본다: 예(True) / 아니오(False) / 모름(None)
+#   - 하나라도 아니오 → 안전 (PASS)
+#   - 모두 예        → 위반 (BLOCK)
+#   - 그 외          → 판단 불가 (REVIEW)
+# Terraform google provider 문서 기준:
+#   - direction 생략 시 INGRESS
+#   - INGRESS는 source_ranges / source_tags / source_service_accounts 중 하나가 필요
+#   - source_ranges와 source_tags를 함께 쓰면 "둘 중 하나라도 맞으면" 적용 (OR)
+#   - allow의 ports를 생략하면 그 프로토콜의 모든 포트
+# ---------------------------------------------------------------------------
+
+GCP_PUBLIC_RANGES = {"0.0.0.0/0", "::/0"}
+GCP_TCP_PROTOCOLS = {"tcp", "6"}   # 6 = TCP의 IP 프로토콜 번호
+
+
+def is_opaque_block_list(value):
+    """블록 목록 자체가 변수·표현식이라 안을 볼 수 없는가? (블록 안의 개별 변수는 해당 없음)"""
+    return value is not None and (
+        not isinstance(value, (list, dict))
+        or (isinstance(value, list) and any(not isinstance(item, dict) for item in value)))
+
+
+def gcp_direction_ingress(body):
+    direction = body.get("direction")
+    if direction is None:
+        return True   # 생략 시 기본값 INGRESS
+    return text_state(direction, {"ingress"}, {"egress"})
+
+
+def gcp_rule_enabled(body):
+    disabled = body.get("disabled")
+    if disabled is None or disabled is False:
+        return True
+    if disabled is True:
+        return False  # 비활성 규칙은 트래픽에 적용되지 않음
+    return text_state(disabled, {"false"}, {"true"})  # "true"/"false" 문자열, 변수는 None
+
+
+def gcp_source_public(body):
+    """출발지가 인터넷 전체인가?
+
+    - source_ranges에 0.0.0.0/0 또는 ::/0가 있으면 예 (source_tags가 같이 있어도 OR 이므로 예)
+    - source_ranges가 특정 대역뿐이면 아니오
+    - source_ranges 없이 source_tags / source_service_accounts만 있으면 아니오
+      (특정 VM에서 오는 트래픽만 해당)
+    - 출발지를 하나도 지정하지 않았으면 모름 (provider 버전에 따라 오류이거나 GCP 기본값 0.0.0.0/0)
+    """
+    ranges = body.get("source_ranges")
+    if ranges is not None and not isinstance(ranges, list):
+        return None if is_unresolved(ranges) else (
+            True if string_value(ranges) in GCP_PUBLIC_RANGES else False)
+    items = ranges or []
+    if any(not is_unresolved(r) and string_value(r) in GCP_PUBLIC_RANGES for r in items):
+        return True
+    if any(is_unresolved(r) for r in items):
+        return None
+    if items:
+        return False
+    instance_sources = [body.get("source_tags"), body.get("source_service_accounts")]
+    if any(v is not None and v != [] for v in instance_sources):
+        return False
+    return None
+
+
+def gcp_allow_covers_admin(allow):
+    """allow 블록 하나가 TCP 22/3389를 허용하는가?"""
+    protocol = allow.get("protocol")
+    if protocol is None or is_unresolved(protocol):
+        return None
+    protocol = string_value(protocol).lower()
+    if protocol == "all":
+        return True
+    if protocol not in GCP_TCP_PROTOCOLS:
+        return False  # udp, icmp 등은 SSH/RDP(TCP) 접속이 아님
+    ports = allow.get("ports")
+    if ports is None or ports == []:
+        return True   # ports 생략 = 모든 TCP 포트
+    if not isinstance(ports, list):
+        return None if is_unresolved(ports) else port_spec_covers_admin(ports)
+    results = [port_spec_covers_admin(p) for p in ports]
+    if True in results:
+        return True
+    if None in results:
+        return None
+    return False
+
+
+def gcp_allows_admin(body):
+    """방화벽의 allow 블록 전체 중 관리자 포트를 허용하는 것이 있는가? (deny 블록은 허용이 아님)"""
+    allows = body.get("allow")
+    results = []
+    if is_opaque_block_list(allows):
+        results.append(None)              # allow = var.rules 처럼 목록 전체가 변수
+    else:
+        results.extend(gcp_allow_covers_admin(a) for a in blocks(allows))
+    if any("allow" in dyn for dyn in blocks(body.get("dynamic", []))):
+        results.append(None)              # dynamic "allow" 블록은 해석하지 않음
+    if True in results:
+        return True
+    if None in results:
+        return None
+    return False                          # allow가 없거나(deny만) 모두 안전
+
+
+def evaluate_gcp_firewall(body):
+    """GCP 방화벽 1개 → ('BLOCK'|'REVIEW'|'PASS', 확인 못 한 항목 목록)."""
+    conditions = {
+        "direction": gcp_direction_ingress(body),
+        "disabled": gcp_rule_enabled(body),
+        "출발지": gcp_source_public(body),
+        "허용 포트": gcp_allows_admin(body),
+    }
+    if False in conditions.values():
+        return "PASS", []
+    unknown = [name for name, state in conditions.items() if state is None]
+    return ("REVIEW", unknown) if unknown else ("BLOCK", [])
+
+
+
+# ---------------------------------------------------------------------------
+# GCP 방화벽 정책 규칙 (PR 4 보완)
+# 공식 Terraform 유형: 계층형 / 전역 네트워크 / 리전 네트워크 Firewall Policy Rule.
+# 기존 google_compute_firewall과 구조가 달라 별도로 판정한다.
+# 단순한 action/direction/match/src_ip_ranges/layer4_configs는 분석하며,
+# 평가할 수 없는 source selector, dynamic block, expression은 REVIEW로 차단한다.
+# 주의: Terraform 정적 분석으로 실제 우선순위/연결/실제 유효 트래픽을 확증하지 않는다.
+# ---------------------------------------------------------------------------
+
+GCP_FIREWALL_POLICY_RULE_TYPES = {
+    "google_compute_firewall_policy_rule",
+    "google_compute_network_firewall_policy_rule",
+    "google_compute_region_network_firewall_policy_rule",
+}
+
+
+def is_other_gcp_firewall_policy_rule_type(resource_type):
+    """아직 이름을 등록하지 않은 GCP Firewall Policy Rule 계열의 안전한 기본 처리.
+
+    *_firewall_policy_with_rules 자원(정책 안에 rule 블록을 직접 넣는 방식)도 포함한다.
+    이 자원들은 아직 내용을 해석하지 않으므로, 결과에서 빠지지 않도록 REVIEW로 차단한다.
+    """
+    return (resource_type.startswith("google_compute_")
+            and ("firewall_policy_rule" in resource_type
+                 or "firewall_policy_with_rules" in resource_type)
+            and resource_type not in GCP_FIREWALL_POLICY_RULE_TYPES)
+
+
+def gcp_policy_public_source(match):
+    """공개 출발지? 단순한 src_ip_ranges만 확정하고 다른 selector는 보수적으로 REVIEW."""
+    ranges = match.get("src_ip_ranges")
+    if ranges is not None and not isinstance(ranges, list):
+        return None
+    items = ranges or []
+    # 정책 리소스의 복잡한 소스 조건은 OR/AND 관계를 안전하게 평가할 수 없다.
+    # 공개 주소가 함께 나타나도 다른 source selector가 있으면 BLOCK으로 단정하지 않는다.
+    other_selectors = (
+        "src_address_groups", "src_secure_tags", "src_fqdns", "src_region_codes",
+        "src_threat_intelligences", "src_networks", "src_network_scope",
+    )
+    if any(match.get(k) not in (None, [], "") for k in other_selectors):
+        return None
+    if any("src_secure_tags" in dyn for dyn in blocks(match.get("dynamic", []))):
+        return None
+    if any(not is_unresolved(v) and isinstance(v, str)
+           and string_value(v) in GCP_PUBLIC_RANGES for v in items):
+        return True
+    if any(is_unresolved(v) or not isinstance(v, str) for v in items):
+        return None
+    if items:
+        return False
+    return None  # 생략·빈 목록에 기본값을 가정하지 않음
+
+
+def gcp_policy_admin_ports(match):
+    """match.layer4_configs의 TCP 22/3389 포함 여부 (다중 블록 포함)."""
+    configs = match.get("layer4_configs")
+    if is_opaque_block_list(configs):
+        return None
+    results = [gcp_allow_covers_admin({"protocol": c.get("ip_protocol"),
+                                       "ports": c.get("ports")})
+               for c in blocks(configs)]
+    if any("layer4_configs" in dyn for dyn in blocks(match.get("dynamic", []))):
+        results.append(None)
+    if True in results:
+        return True
+    if None in results or not results:
+        return None
+    return False
+
+
+def evaluate_gcp_firewall_policy_rule(body):
+    """3종 GCP 방화벽 정책 규칙의 단순/확실한 위험을 구분하는 보수적 판정."""
+    direction = body.get("direction")
+    conditions = {
+        "direction": (text_state(direction, {"ingress"}, {"egress"})
+                      if direction is not None else None),
+        "disabled": gcp_rule_enabled(body),
+        # apply_security_profile_group: 트래픽을 검사 장비로 보낸 뒤 통과시킨다
+        # (검사 실패 시 기본 동작도 allow) → 허용과 같이 본다.
+        "action": (text_state(body.get("action"), {"allow", "apply_security_profile_group"},
+                              {"deny", "goto_next"})
+                   if body.get("action") is not None else None),
+    }
+    if False in conditions.values():
+        return "PASS", []  # 비활성/EGRESS/deny 등은 이 규칙으로 관리자 인바운드 허용 불가
+
+    match_value = body.get("match")
+    matches = blocks(match_value)
+    if (is_opaque_block_list(match_value) or len(matches) != 1 or
+            any("match" in dyn for dyn in blocks(body.get("dynamic", [])))):
+        conditions["match"] = None
+    else:
+        match = matches[0]
+        conditions["출발지"] = gcp_policy_public_source(match)
+        conditions["허용 포트"] = gcp_policy_admin_ports(match)
+
+    if False in conditions.values():
+        return "PASS", []
+    unknown = [key for key, value in conditions.items() if value is None]
+    return ("REVIEW", unknown) if unknown else ("BLOCK", [])
+
+
+
+# ---------------------------------------------------------------------------
 # 검사 규칙
 # ---------------------------------------------------------------------------
 
@@ -482,6 +719,34 @@ def scan_configuration(data, s3_links=None):
                     add("AZURE_ADMIN_PORT_UNRESOLVED", ref,
                         "dynamic \"security_rule\" 블록은 지원하지 않아 규칙 내용을 확인할 수 없음 (검토 필요)")
 
+        # GCP firewall allows public SSH/RDP (CG-NET-01).
+        if typ == "google_compute_firewall":
+            verdict, unknown = evaluate_gcp_firewall(body)
+            if verdict == "BLOCK":
+                add("GCP_PUBLIC_ADMIN_PORT", ref,
+                    "인터넷 전체(0.0.0.0/0 또는 ::/0)에서 SSH(22) 또는 RDP(3389) 접속 허용")
+            elif verdict == "REVIEW":
+                add("GCP_ADMIN_PORT_UNRESOLVED", ref,
+                    "값을 확인할 수 없어 관리자 포트 공개 여부를 판단할 수 없음: "
+                    + ", ".join(unknown) + " (검토 필요)")
+
+        # GCP hierarchical/global/regional firewall policy rules (CG-NET-01).
+        # 지원하는 리소스의 단순 설정은 PASS/BLOCK을 판정하고 불명확한 경우 REVIEW.
+        if typ in GCP_FIREWALL_POLICY_RULE_TYPES:
+            verdict, unknown = evaluate_gcp_firewall_policy_rule(body)
+            if verdict == "BLOCK":
+                add("GCP_FIREWALL_POLICY_PUBLIC_ADMIN_PORT", ref,
+                    "GCP 방화벽 정책 규칙이 인터넷 전체에서 TCP 22/3389 인바운드를 허용하도록 설정됨")
+            elif verdict == "REVIEW":
+                add("GCP_FIREWALL_POLICY_UNRESOLVED", ref,
+                    "GCP 방화벽 정책 규칙을 확정 판정할 수 없음: "
+                    + ", ".join(unknown) + " (검토 필요)")
+
+        if is_other_gcp_firewall_policy_rule_type(typ):
+            add("GCP_FIREWALL_POLICY_UNRESOLVED", ref,
+                "분석을 지원하지 않는 GCP 방화벽 정책 규칙 자원 유형(규칙 내용을 확인하지 못함): "
+                + typ + " (검토 필요)")
+
         # Azure DB server passwords written as literal Terraform strings.
         if typ.startswith("azurerm_"):
             for password_key in ("administrator_login_password", "administrator_password"):
@@ -519,7 +784,9 @@ def build_checks(data, findings):
         ref = f"{typ}.{name}"
         cloud = cloud_of(typ)
         for (policy, target_cloud), target_types in POLICY_TARGETS.items():
-            if cloud == target_cloud and typ in target_types:
+            if cloud == target_cloud and (typ in target_types or
+                    (policy == "CG-NET-01" and cloud == "gcp" and
+                     is_other_gcp_firewall_policy_rule_type(typ))):
                 status = worst(f["verdict"] for f in findings
                                if f["resource"] == ref and f["policy"] == policy)
                 checks.append({"resource": ref, "cloud": cloud,
