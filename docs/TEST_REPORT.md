@@ -169,3 +169,84 @@ GPT 교차 검토에서 `tools/check_scenario.py` 의 `aggregate()` 가 시나�
 | 전체 고장 주입 | PR 6 신규 32/32 + PR 5의 31/31 = **63가지 모두 탐지** |
 | 단위 테스트 / 자가 점검 | **386** 통과 / 47/47 (Python 3.13, 3.12 + python-hcl2 7.3.1) |
 | 변경 범위 | `tools/check_scenario.py`, `tests/test_integration_scenarios.py` (+ 이 보고서·설명서 숫자) |
+
+## v3.1 — CG-NET-01 AWS 표현 방식 + `.tf.json` 차단 (2026-11-07)
+
+v4 설계 검토 중 실제 코드로 확인한 **탐지 누락(조용한 PASS) 3가지**를 고쳤다. 새 기능은 없고, 기존 판정 4종·종료 코드·결과 JSON 구조·규칙 29개는 그대로다.
+
+| # | 수정 전 | 수정 후 |
+|---|---|---|
+| 1 | `aws_security_group_rule`(type = ingress)로 SSH 22 를 0.0.0.0/0 에 공개 → **PASS** (검사 대상이 아니었음) | 다른 표현 방식과 같은 판정 (BLOCK/REVIEW/PASS) |
+| 2 | `aws_security_group` 의 `ingress = var.rules`, `ingress = [for ...]`, `dynamic "ingress"` → **PASS** (규칙이 없는 것처럼 처리) | REVIEW (`AWS_ADMIN_PORT_UNRESOLVED`) — Azure NSG 의 같은 경우와 같은 방식 |
+| 3 | `.tf` 와 `.tf.json` 이 섞인 폴더 → `.tf.json` 을 **조용히 무시** (Terraform 은 배포함) | `.tf.json` 마다 ERROR 결과, 종료 코드 2 |
+
+### 표현 방식 동등성 (CG-NET-01, AWS)
+
+같은 인바운드 규칙을 4가지 방법(인라인 `ingress` 블록, 인라인 `ingress = [{...}]`, `aws_vpc_security_group_ingress_rule`, `aws_security_group_rule`)으로 쓰고 22가지 경우를 모두 검사한다 (`tests/test_aws_net01_equivalence.py`). 판정과 규칙 ID 가 4가지 모두 같아야 통과.
+
+| 경우 | 기대 |
+|---|---|
+| IPv4·IPv6 공개 + 22 / 3389 (4가지) | BLOCK |
+| 공개 + 포트 범위 20-30, 3000-4000(IPv6), 0-65535 | BLOCK |
+| 공개 + 전체 프로토콜 `-1` (IPv4·IPv6) | BLOCK |
+| 회사 대역(IPv4·IPv6) + 22, 회사 대역 + `-1`, 공개 + 443(IPv4·IPv6), 공개 + 23-3388 | PASS |
+| 출발지 변수 + 443, 회사 대역 + 포트 변수 | PASS (어떤 값이어도 위반 불가) |
+| 출발지 변수 + 22 (IPv4·IPv6), 공개 + 포트 변수, 공개 + 프로토콜 변수, 출발지 변수 + `-1` | REVIEW |
+
+- **수정 전에도** 인라인 블록·인라인 속성·`ingress_rule` 3가지는 22가지 모두 기대대로였다. `aws_security_group_rule` 만 BLOCK·REVIEW 14가지가 모두 PASS 로 나왔다.
+- 나가는 방향(인라인 `egress`, `egress = [{...}]`, `aws_vpc_security_group_egress_rule`, `aws_security_group_rule` type = egress)은 CG-NET-01 범위 밖 → 22가지 모두 PASS (수정 전후 같음).
+- `aws_security_group_rule` 의 type 이 변수·생략·처음 보는 값이면 방향을 알 수 없으므로, 위반 가능성이 있을 때 REVIEW (회사 대역처럼 어느 방향이든 안전하면 PASS). 대문자 `INGRESS` 는 ingress 로 본다 (Terraform 은 이 값을 거부하므로 배포되지 않음 — 보수적 처리).
+- checks 와 Summary 지원 행렬에 `aws_security_group_rule` 이 추가됐다 (그래서 이 자원만 있는 폴더가 'N/A' 로 보이지 않는다).
+
+### `.tf.json` 처리 (`tests/test_tf_json_files.py`, 명령줄 게이트 경로로 실행)
+
+| 폴더 | 수정 전 | 수정 후 |
+|---|---|---|
+| 비어 있음 | ERROR(2) | ERROR(2) — 같은 안내 문구 |
+| `.tf.json` 만 | ERROR(2) | ERROR(2) — 같은 안내 문구 + `.tf.json` 파일 이름 줄 추가 |
+| 경로 없음 / `.tf.json` 파일 하나를 직접 지정 | ERROR(2) | ERROR(2) |
+| `.tf` + `.tf.json` (하위 폴더·`override.tf.json` 포함) | `.tf` 결과만, `.tf.json` 무시 | `.tf.json` 은 ERROR, `.tf` 는 평소대로 검사, 종료 코드 2 |
+| BLOCK `.tf` + `.tf.json` | 1 | 2 (ERROR 우선, BLOCK 기록은 남음) |
+| `.tf` + `policy.json`·`terraform.tfvars.json`·`*.tf.json.bak` | 0 | 0 (오탐 없음) |
+| `.tf.json` 이 없는 폴더 | — | 결과 JSON 이 수정 전과 바이트 단위로 같음 (`samples/`, `scenarios/`, `infra/`) |
+
+`.tf.json` 결과는 기존 분석 오류와 같은 5개 필드(`file, status, findings, checks, error`)이고, `summary.py` 가 그대로 표시한다.
+
+### 수정 전 실패 → 수정 후 통과
+
+| 실행 | 결과 |
+|---|---|
+| 새 테스트 2개 파일(18개)을 **PR 6 코드**에 넣어 실행 | 28개 실패 (`aws_security_group_rule` 동등성 14, 방향 4, 불투명 인라인 3, checks 1, 행렬 1, `.tf.json` 5) |
+| 같은 테스트를 v3.1 코드에서 실행 | 18개 모두 통과 |
+
+`.tf.json` 만 있는 폴더 테스트는 수정 전에도 ERROR(2) 였고, 실패 원인은 새로 추가한 파일 이름 안내 줄이다.
+
+### 고장 주입
+
+| 묶음 | 결과 |
+|---|---|
+| v3.1 신규 15가지 (N-1~N-15: 수정 되돌리기, IPv6 무시, egress 오판, 방향 불명 오판, dynamic 무시·과잉, `.tf.json` 무시·하위 폴더 누락·`*.json` 과잉·REVIEW 로 기록 등) | **15/15 탐지** — 모두 신규 테스트가 잡았고, **기존 386개 테스트만으로는 15가지 모두 못 잡음** (신규 테스트가 꼭 필요함을 확인) |
+| PR 6 의 32가지를 v3.1 코드에 다시 주입 | 32/32 탐지 |
+| PR 5 의 31가지를 v3.1 코드에 다시 주입 | 31/31 탐지 |
+
+고장 주입은 다른 테스트 실행과 **겹치지 않게 순서대로** 실행했다 (아래 "알려진 한계" 6 참고).
+
+### 회귀
+
+| 항목 | 결과 |
+|---|---|
+| 단위 테스트 | **404** 통과 (PR 6 386 + 신규 18), Python 3.13·3.12, 연속 3회 |
+| 자가 점검 | 47/47 (예시·정답표 변경 없음) |
+| 통합 시나리오 | 7/7 기대대로 (정답표 변경 없음) |
+| 결과 JSON | `samples/`·`scenarios/`·`infra/` 전체 결과가 PR 6 과 바이트 단위로 같음 |
+| Summary | 지원 행렬의 CG-NET-01 × AWS 한 줄만 바뀜 (검사 대상 자원 목록·한계 문구). 결과표는 같음 |
+| 워크플로 | 변경 없음 (필수 검사 3개 이름·구조 그대로) |
+
+### 알려진 한계 (이번에 고치지 않음)
+
+1. `.tf.json` 은 **해석하지 않고 차단**만 한다. Terraform JSON 파서는 범위 밖.
+2. 인터넷 전체는 `0.0.0.0/0`·`::/0` 문자열만 알아본다. `0::/0` 같은 다른 표기(AWS 가 받아들이는지는 확인하지 않음), 대역을 쪼갠 전체 공개(`0.0.0.0/1` + `128.0.0.0/1`), 접두사 목록 안의 대역은 확인하지 않는다 (v3 부터 있던 한계, 이번에 문서화).
+3. 포트만 보고 프로토콜 종류(tcp/udp)는 구분하지 않는다. 예: udp 22 공개도 BLOCK (v3 와 같음, 보수적).
+4. 나가는 규칙(egress)은 CG-NET-01 대상이 아니다.
+5. `dynamic "ingress"` 는 펼치지 않고 REVIEW 한다.
+6. **테스트 실행 환경 주의 (v3 PR 6 부터 있던 문제, 이번에 발견):** `tests/test_integration_scenarios.py` 와 `tools/check_scenario.py` 가 `/tmp/cg-test-*.json`, `/tmp/cg-scenario-*.json` 고정 경로를 쓴다. 같은 PC 에서 테스트를 **두 개 동시에** 돌리면 파일이 겹쳐 가짜 실패가 날 수 있다. GitHub Actions 는 작업마다 다른 컴퓨터라 영향이 없다. 이번 PR 범위(탐지 누락)를 넘으므로 고치지 않고 기록만 한다.
