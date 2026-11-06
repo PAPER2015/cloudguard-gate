@@ -57,6 +57,24 @@
       "AZURE_STORAGE_STATIC_WEBSITE"
     ]
   },
+  "review/47_gcp_pap_inherited.tf": {
+    "status": "REVIEW",
+    "rules": [
+      "GCP_STORAGE_PAP_NOT_ENFORCED"
+    ]
+  },
+  "review/48_gcp_iam_member_variable.tf": {
+    "status": "REVIEW",
+    "rules": [
+      "GCP_STORAGE_PUBLIC_UNRESOLVED"
+    ]
+  },
+  "review/50_gcp_pap_variable.tf": {
+    "status": "REVIEW",
+    "rules": [
+      "GCP_STORAGE_PUBLIC_UNRESOLVED"
+    ]
+  },
   "risky/07_aws_sg_ssh_open.tf": {
     "status": "BLOCK",
     "rules": [
@@ -146,6 +164,37 @@
       "AZURE_STORAGE_CONTAINER_PUBLIC"
     ]
   },
+  "risky/43_gcp_storage_public_iam.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "GCP_STORAGE_PAP_NOT_ENFORCED",
+      "GCP_STORAGE_PUBLIC_IAM"
+    ]
+  },
+  "risky/44_gcp_object_acl_public.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "GCP_STORAGE_PUBLIC_ACL"
+    ]
+  },
+  "risky/45_gcp_pap_enforced_public_iam.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "GCP_STORAGE_PUBLIC_IAM"
+    ]
+  },
+  "risky/46_gcp_all_authenticated_binding.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "GCP_STORAGE_PUBLIC_IAM"
+    ]
+  },
+  "risky/49_gcp_custom_role_public.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "GCP_STORAGE_PUBLIC_IAM"
+    ]
+  },
   "safe/01_aws_s3_private.tf": {
     "status": "PASS",
     "rules": []
@@ -195,6 +244,14 @@
     "rules": []
   },
   "safe/37_azure_storage_v5_default.tf": {
+    "status": "PASS",
+    "rules": []
+  },
+  "safe/41_gcp_storage_private_iam.tf": {
+    "status": "PASS",
+    "rules": []
+  },
+  "safe/42_gcp_managed_folder_group.tf": {
     "status": "PASS",
     "rules": []
   }

@@ -1,0 +1,2393 @@
+{
+ "exit": {
+  "infra": 0,
+  "samples": 2,
+  "samples/error": 2,
+  "samples/review": 1,
+  "samples/risky": 1,
+  "samples/safe": 1
+ },
+ "files": {
+  "samples/error/25_syntax_error.tf": {
+   "checks": [],
+   "error": "UnexpectedToken: Unexpected token Token('$END', '') at line 5, column 1.\nExpected one of: \n\t* RBRACE\n",
+   "file": "samples/error/25_syntax_error.tf",
+   "findings": [],
+   "status": "ERROR"
+  },
+  "samples/review/22_aws_port_variable.tf": {
+   "checks": [
+    {
+     "cloud": "aws",
+     "policy": "CG-NET-01",
+     "resource": "aws_security_group.admin",
+     "status": "REVIEW"
+    }
+   ],
+   "error": null,
+   "file": "samples/review/22_aws_port_variable.tf",
+   "findings": [
+    {
+     "cloud": "aws",
+     "policy": "CG-NET-01",
+     "reason": "출발지·포트·프로토콜 중 변수·표현식 값이 있어 관리자 포트 공개 여부를 확인할 수 없음 (검토 필요)",
+     "resource": "aws_security_group.admin",
+     "rule": "AWS_ADMIN_PORT_UNRESOLVED",
+     "verdict": "REVIEW"
+    }
+   ],
+   "status": "REVIEW"
+  },
+  "samples/review/23_azure_nsg_source_variable.tf": {
+   "checks": [
+    {
+     "cloud": "azure",
+     "policy": "CG-NET-01",
+     "resource": "azurerm_network_security_rule.ssh_variable",
+     "status": "REVIEW"
+    }
+   ],
+   "error": null,
+   "file": "samples/review/23_azure_nsg_source_variable.tf",
+   "findings": [
+    {
+     "cloud": "azure",
+     "policy": "CG-NET-01",
+     "reason": "값을 확인할 수 없어 관리자 포트 공개 여부를 판단할 수 없음: 출발지 (검토 필요)",
+     "resource": "azurerm_network_security_rule.ssh_variable",
+     "rule": "AZURE_ADMIN_PORT_UNRESOLVED",
+     "verdict": "REVIEW"
+    }
+   ],
+   "status": "REVIEW"
+  },
+  "samples/review/27_aws_bucket_no_block.tf": {
+   "checks": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "resource": "aws_s3_bucket.logs",
+     "status": "REVIEW"
+    }
+   ],
+   "error": null,
+   "file": "samples/review/27_aws_bucket_no_block.tf",
+   "findings": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "reason": "S3 버킷에 연결된 공개 차단 설정(aws_s3_bucket_public_access_block)이 없어 공개 여부를 확인할 수 없음 (검토 필요)",
+     "resource": "aws_s3_bucket.logs",
+     "rule": "AWS_S3_NO_PUBLIC_BLOCK",
+     "verdict": "REVIEW"
+    }
+   ],
+   "status": "REVIEW"
+  },
+  "samples/review/28_aws_s3_flag_variable.tf": {
+   "checks": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "resource": "aws_s3_bucket_public_access_block.variable",
+     "status": "REVIEW"
+    }
+   ],
+   "error": null,
+   "file": "samples/review/28_aws_s3_flag_variable.tf",
+   "findings": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "reason": "S3 공개 접근 차단 옵션 값을 확인할 수 없음(변수·표현식·생략): block_public_acls",
+     "resource": "aws_s3_bucket_public_access_block.variable",
+     "rule": "AWS_S3_BLOCK_UNRESOLVED",
+     "verdict": "REVIEW"
+    }
+   ],
+   "status": "REVIEW"
+  },
+  "samples/review/29_aws_s3_policy_expression.tf": {
+   "checks": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "resource": "aws_s3_bucket_policy.generated",
+     "status": "REVIEW"
+    }
+   ],
+   "error": null,
+   "file": "samples/review/29_aws_s3_policy_expression.tf",
+   "findings": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "reason": "S3 정책을 읽을 수 없음(생략·변수·표현식, jsonencode 포함)",
+     "resource": "aws_s3_bucket_policy.generated",
+     "rule": "AWS_S3_POLICY_UNRESOLVED",
+     "verdict": "REVIEW"
+    }
+   ],
+   "status": "REVIEW"
+  },
+  "samples/review/31_aws_s3_invalid_policy_json.tf": {
+   "checks": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "resource": "aws_s3_bucket_policy.invalid_json",
+     "status": "REVIEW"
+    }
+   ],
+   "error": null,
+   "file": "samples/review/31_aws_s3_invalid_policy_json.tf",
+   "findings": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "reason": "S3 정책을 JSON 문서로 해석할 수 없음",
+     "resource": "aws_s3_bucket_policy.invalid_json",
+     "rule": "AWS_S3_POLICY_UNRESOLVED",
+     "verdict": "REVIEW"
+    }
+   ],
+   "status": "REVIEW"
+  },
+  "samples/review/35_gcp_regional_policy_address_group.tf": {
+   "checks": [
+    {
+     "cloud": "gcp",
+     "policy": "CG-NET-01",
+     "resource": "google_compute_region_network_firewall_policy_rule.complex_source",
+     "status": "REVIEW"
+    }
+   ],
+   "error": null,
+   "file": "samples/review/35_gcp_regional_policy_address_group.tf",
+   "findings": [
+    {
+     "cloud": "gcp",
+     "policy": "CG-NET-01",
+     "reason": "GCP 방화벽 정책 규칙을 확정 판정할 수 없음: 출발지 (검토 필요)",
+     "resource": "google_compute_region_network_firewall_policy_rule.complex_source",
+     "rule": "GCP_FIREWALL_POLICY_UNRESOLVED",
+     "verdict": "REVIEW"
+    }
+   ],
+   "status": "REVIEW"
+  },
+  "samples/review/38_azure_storage_version_unknown.tf": {
+   "checks": [
+    {
+     "cloud": "azure",
+     "policy": "CG-STO-01",
+     "resource": "azurerm_storage_account.unknown",
+     "status": "REVIEW"
+    }
+   ],
+   "error": null,
+   "file": "samples/review/38_azure_storage_version_unknown.tf",
+   "findings": [
+    {
+     "cloud": "azure",
+     "exposure": "undetermined",
+     "policy": "CG-STO-01",
+     "reason": "익명 공개 허용 설정 생략, 기본값을 정할 수 없음 (azurerm 버전 정보 없음) (검토 필요)",
+     "resource": "azurerm_storage_account.unknown",
+     "rule": "AZURE_STORAGE_PUBLIC_UNRESOLVED",
+     "verdict": "REVIEW"
+    }
+   ],
+   "status": "REVIEW"
+  },
+  "samples/review/39_azure_static_website.tf": {
+   "checks": [
+    {
+     "cloud": "azure",
+     "policy": "CG-STO-01",
+     "resource": "azurerm_storage_account.site",
+     "status": "PASS"
+    },
+    {
+     "cloud": "azure",
+     "policy": "CG-STO-01",
+     "resource": "azurerm_storage_account_static_website.site",
+     "status": "REVIEW"
+    }
+   ],
+   "error": null,
+   "file": "samples/review/39_azure_static_website.tf",
+   "findings": [
+    {
+     "cloud": "azure",
+     "exposure": "intentional_static_website",
+     "policy": "CG-STO-01",
+     "reason": "정적 웹사이트 자원: $web 컨테이너는 계정의 익명 접근 설정과 무관하게 공개됨 — 의도된 공개인지 확인 필요 (검토 필요)",
+     "resource": "azurerm_storage_account_static_website.site",
+     "rule": "AZURE_STORAGE_STATIC_WEBSITE",
+     "verdict": "REVIEW"
+    }
+   ],
+   "status": "REVIEW"
+  },
+  "samples/risky/07_aws_sg_ssh_open.tf": {
+   "checks": [
+    {
+     "cloud": "aws",
+     "policy": "CG-NET-01",
+     "resource": "aws_security_group.bastion",
+     "status": "BLOCK"
+    }
+   ],
+   "error": null,
+   "file": "samples/risky/07_aws_sg_ssh_open.tf",
+   "findings": [
+    {
+     "cloud": "aws",
+     "policy": "CG-NET-01",
+     "reason": "인터넷 전체에 SSH(22), RDP(3389) 또는 전체 포트 범위 노출",
+     "resource": "aws_security_group.bastion",
+     "rule": "AWS_PUBLIC_ADMIN_PORT",
+     "verdict": "BLOCK"
+    }
+   ],
+   "status": "BLOCK"
+  },
+  "samples/risky/08_azure_sql_hardcoded.tf": {
+   "checks": [],
+   "error": null,
+   "file": "samples/risky/08_azure_sql_hardcoded.tf",
+   "findings": [
+    {
+     "cloud": "azure",
+     "policy": null,
+     "reason": "관리자 비밀번호가 설정 파일에 직접 기록됨 (실제 값은 출력하지 않음)",
+     "resource": "azurerm_mssql_server.legacy",
+     "rule": "AZURE_HARDCODED_PASSWORD",
+     "verdict": "BLOCK"
+    },
+    {
+     "cloud": "azure",
+     "policy": null,
+     "reason": "오래된 TLS 최소 버전(1.0 또는 1.1) 허용",
+     "resource": "azurerm_mssql_server.legacy",
+     "rule": "AZURE_OLD_TLS",
+     "verdict": "BLOCK"
+    },
+    {
+     "cloud": "azure",
+     "policy": null,
+     "reason": "DB 방화벽이 전체 IPv4 범위를 허용함",
+     "resource": "azurerm_mssql_firewall_rule.allow_all",
+     "rule": "AZURE_WIDE_FIREWALL",
+     "verdict": "BLOCK"
+    }
+   ],
+   "status": "BLOCK"
+  },
+  "samples/risky/09_gcp_owner_and_key.tf": {
+   "checks": [],
+   "error": null,
+   "file": "samples/risky/09_gcp_owner_and_key.tf",
+   "findings": [
+    {
+     "cloud": "gcp",
+     "policy": null,
+     "reason": "계정에 프로젝트 전체 관리자(Owner) 권한을 부여함",
+     "resource": "google_project_iam_member.contractor",
+     "rule": "GCP_PROJECT_OWNER",
+     "verdict": "BLOCK"
+    },
+    {
+     "cloud": "gcp",
+     "policy": null,
+     "reason": "서비스 계정 장기 키 생성: 프로젝트 정책상 차단 (데모 기준)",
+     "resource": "google_service_account_key.ci_key",
+     "rule": "GCP_SERVICE_ACCOUNT_KEY",
+     "verdict": "BLOCK"
+    }
+   ],
+   "status": "BLOCK"
+  },
+  "samples/risky/10_aws_s3_public.tf": {
+   "checks": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "resource": "aws_s3_bucket_public_access_block.open",
+     "status": "BLOCK"
+    },
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "resource": "aws_s3_bucket_policy.open",
+     "status": "BLOCK"
+    }
+   ],
+   "error": null,
+   "file": "samples/risky/10_aws_s3_public.tf",
+   "findings": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "reason": "S3 공개 접근 차단 옵션 비활성화: block_public_acls, block_public_policy, ignore_public_acls, restrict_public_buckets",
+     "resource": "aws_s3_bucket_public_access_block.open",
+     "rule": "AWS_S3_PUBLIC_BLOCK_OFF",
+     "verdict": "BLOCK"
+    },
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "reason": "S3 정책에서 Effect=Allow이면서 Principal=*로 공개 접근을 허용하는 설정",
+     "resource": "aws_s3_bucket_policy.open",
+     "rule": "AWS_S3_WILDCARD_PRINCIPAL",
+     "verdict": "BLOCK"
+    }
+   ],
+   "status": "BLOCK"
+  },
+  "samples/risky/13_azure_nsg_rdp_open.tf": {
+   "checks": [
+    {
+     "cloud": "azure",
+     "policy": "CG-NET-01",
+     "resource": "azurerm_network_security_rule.rdp_open",
+     "status": "BLOCK"
+    }
+   ],
+   "error": null,
+   "file": "samples/risky/13_azure_nsg_rdp_open.tf",
+   "findings": [
+    {
+     "cloud": "azure",
+     "policy": "CG-NET-01",
+     "reason": "인터넷 전체에서 SSH(22) 또는 RDP(3389) 인바운드 허용",
+     "resource": "azurerm_network_security_rule.rdp_open",
+     "rule": "AZURE_PUBLIC_ADMIN_PORT",
+     "verdict": "BLOCK"
+    }
+   ],
+   "status": "BLOCK"
+  },
+  "samples/risky/14_azure_nsg_range_open.tf": {
+   "checks": [
+    {
+     "cloud": "azure",
+     "policy": "CG-NET-01",
+     "resource": "azurerm_network_security_group.range_open",
+     "status": "BLOCK"
+    }
+   ],
+   "error": null,
+   "file": "samples/risky/14_azure_nsg_range_open.tf",
+   "findings": [
+    {
+     "cloud": "azure",
+     "policy": "CG-NET-01",
+     "reason": "인터넷 전체에서 SSH(22) 또는 RDP(3389) 인바운드 허용 (내부 규칙 'allow-low-ports')",
+     "resource": "azurerm_network_security_group.range_open",
+     "rule": "AZURE_PUBLIC_ADMIN_PORT",
+     "verdict": "BLOCK"
+    }
+   ],
+   "status": "BLOCK"
+  },
+  "samples/risky/16_gcp_fw_ssh_open.tf": {
+   "checks": [
+    {
+     "cloud": "gcp",
+     "policy": "CG-NET-01",
+     "resource": "google_compute_firewall.ssh_open",
+     "status": "BLOCK"
+    }
+   ],
+   "error": null,
+   "file": "samples/risky/16_gcp_fw_ssh_open.tf",
+   "findings": [
+    {
+     "cloud": "gcp",
+     "policy": "CG-NET-01",
+     "reason": "인터넷 전체(0.0.0.0/0 또는 ::/0)에서 SSH(22) 또는 RDP(3389) 접속 허용",
+     "resource": "google_compute_firewall.ssh_open",
+     "rule": "GCP_PUBLIC_ADMIN_PORT",
+     "verdict": "BLOCK"
+    }
+   ],
+   "status": "BLOCK"
+  },
+  "samples/risky/17_gcp_fw_all_ports.tf": {
+   "checks": [
+    {
+     "cloud": "gcp",
+     "policy": "CG-NET-01",
+     "resource": "google_compute_firewall.all_tcp_open",
+     "status": "BLOCK"
+    }
+   ],
+   "error": null,
+   "file": "samples/risky/17_gcp_fw_all_ports.tf",
+   "findings": [
+    {
+     "cloud": "gcp",
+     "policy": "CG-NET-01",
+     "reason": "인터넷 전체(0.0.0.0/0 또는 ::/0)에서 SSH(22) 또는 RDP(3389) 접속 허용",
+     "resource": "google_compute_firewall.all_tcp_open",
+     "rule": "GCP_PUBLIC_ADMIN_PORT",
+     "verdict": "BLOCK"
+    }
+   ],
+   "status": "BLOCK"
+  },
+  "samples/risky/19_azure_storage_public.tf": {
+   "checks": [
+    {
+     "cloud": "azure",
+     "policy": "CG-STO-01",
+     "resource": "azurerm_storage_account.public",
+     "status": "BLOCK"
+    },
+    {
+     "cloud": "azure",
+     "policy": "CG-STO-01",
+     "resource": "azurerm_storage_container.images",
+     "status": "BLOCK"
+    }
+   ],
+   "error": null,
+   "file": "samples/risky/19_azure_storage_public.tf",
+   "findings": [
+    {
+     "cloud": "azure",
+     "exposure": "anonymous_access_configured",
+     "policy": "CG-STO-01",
+     "reason": "계정이 컨테이너 익명 공개를 허용함 (명시 설정) [네트워크: 공개, 판정과 무관] (Terraform 정적 구성 기준이며 실제 클라우드 접근을 확인한 것은 아님)",
+     "resource": "azurerm_storage_account.public",
+     "rule": "AZURE_STORAGE_PUBLIC_ALLOWED",
+     "verdict": "BLOCK"
+    },
+    {
+     "cloud": "azure",
+     "exposure": "anonymous_access_configured",
+     "policy": "CG-STO-01",
+     "reason": "컨테이너 접근 수준이 blob/container(익명 읽기 선언) — 연결된 계정 azurerm_storage_account.public (Terraform 정적 구성 기준이며 실제 클라우드 접근을 확인한 것은 아님)",
+     "resource": "azurerm_storage_container.images",
+     "rule": "AZURE_STORAGE_CONTAINER_PUBLIC",
+     "verdict": "BLOCK"
+    }
+   ],
+   "status": "BLOCK"
+  },
+  "samples/risky/30_aws_s3_allow_list_wildcard.tf": {
+   "checks": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "resource": "aws_s3_bucket_policy.allow_list_wildcard",
+     "status": "BLOCK"
+    }
+   ],
+   "error": null,
+   "file": "samples/risky/30_aws_s3_allow_list_wildcard.tf",
+   "findings": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "reason": "S3 정책에서 Effect=Allow이면서 Principal=*로 공개 접근을 허용하는 설정",
+     "resource": "aws_s3_bucket_policy.allow_list_wildcard",
+     "rule": "AWS_S3_WILDCARD_PRINCIPAL",
+     "verdict": "BLOCK"
+    }
+   ],
+   "status": "BLOCK"
+  },
+  "samples/risky/33_gcp_hierarchical_policy_ssh.tf": {
+   "checks": [
+    {
+     "cloud": "gcp",
+     "policy": "CG-NET-01",
+     "resource": "google_compute_firewall_policy_rule.open_ssh",
+     "status": "BLOCK"
+    }
+   ],
+   "error": null,
+   "file": "samples/risky/33_gcp_hierarchical_policy_ssh.tf",
+   "findings": [
+    {
+     "cloud": "gcp",
+     "policy": "CG-NET-01",
+     "reason": "GCP 방화벽 정책 규칙이 인터넷 전체에서 TCP 22/3389 인바운드를 허용하도록 설정됨",
+     "resource": "google_compute_firewall_policy_rule.open_ssh",
+     "rule": "GCP_FIREWALL_POLICY_PUBLIC_ADMIN_PORT",
+     "verdict": "BLOCK"
+    }
+   ],
+   "status": "BLOCK"
+  },
+  "samples/risky/34_gcp_network_policy_rdp.tf": {
+   "checks": [
+    {
+     "cloud": "gcp",
+     "policy": "CG-NET-01",
+     "resource": "google_compute_network_firewall_policy_rule.open_rdp",
+     "status": "BLOCK"
+    }
+   ],
+   "error": null,
+   "file": "samples/risky/34_gcp_network_policy_rdp.tf",
+   "findings": [
+    {
+     "cloud": "gcp",
+     "policy": "CG-NET-01",
+     "reason": "GCP 방화벽 정책 규칙이 인터넷 전체에서 TCP 22/3389 인바운드를 허용하도록 설정됨",
+     "resource": "google_compute_network_firewall_policy_rule.open_rdp",
+     "rule": "GCP_FIREWALL_POLICY_PUBLIC_ADMIN_PORT",
+     "verdict": "BLOCK"
+    }
+   ],
+   "status": "BLOCK"
+  },
+  "samples/risky/36_azure_storage_v4_default.tf": {
+   "checks": [
+    {
+     "cloud": "azure",
+     "policy": "CG-STO-01",
+     "resource": "azurerm_storage_account.logs",
+     "status": "BLOCK"
+    }
+   ],
+   "error": null,
+   "file": "samples/risky/36_azure_storage_v4_default.tf",
+   "findings": [
+    {
+     "cloud": "azure",
+     "exposure": "public_access_possible",
+     "policy": "CG-STO-01",
+     "reason": "익명 공개 허용 설정 생략 → 기본값 true (버전 제약 ~> 4.0 → 가능한 메이저 v4) [네트워크: 공개, 판정과 무관] (Terraform 정적 구성 기준이며 실제 클라우드 접근을 확인한 것은 아님)",
+     "resource": "azurerm_storage_account.logs",
+     "rule": "AZURE_STORAGE_PUBLIC_ALLOWED",
+     "verdict": "BLOCK"
+    }
+   ],
+   "status": "BLOCK"
+  },
+  "samples/risky/40_azure_container_external_account.tf": {
+   "checks": [
+    {
+     "cloud": "azure",
+     "policy": "CG-STO-01",
+     "resource": "azurerm_storage_container.downloads",
+     "status": "BLOCK"
+    }
+   ],
+   "error": null,
+   "file": "samples/risky/40_azure_container_external_account.tf",
+   "findings": [
+    {
+     "cloud": "azure",
+     "exposure": "public_access_possible",
+     "policy": "CG-STO-01",
+     "reason": "컨테이너 접근 수준이 blob/container(익명 읽기 선언) — 연결된 계정을 확인할 수 없음 (Terraform 정적 구성 기준이며 실제 클라우드 접근을 확인한 것은 아님)",
+     "resource": "azurerm_storage_container.downloads",
+     "rule": "AZURE_STORAGE_CONTAINER_PUBLIC",
+     "verdict": "BLOCK"
+    }
+   ],
+   "status": "BLOCK"
+  },
+  "samples/safe/01_aws_s3_private.tf": {
+   "checks": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "resource": "aws_s3_bucket.reports",
+     "status": "PASS"
+    },
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "resource": "aws_s3_bucket_public_access_block.reports",
+     "status": "PASS"
+    }
+   ],
+   "error": null,
+   "file": "samples/safe/01_aws_s3_private.tf",
+   "findings": [],
+   "status": "PASS"
+  },
+  "samples/safe/02_aws_sg_office_ssh.tf": {
+   "checks": [
+    {
+     "cloud": "aws",
+     "policy": "CG-NET-01",
+     "resource": "aws_security_group.web",
+     "status": "PASS"
+    }
+   ],
+   "error": null,
+   "file": "samples/safe/02_aws_sg_office_ssh.tf",
+   "findings": [],
+   "status": "PASS"
+  },
+  "samples/safe/03_azure_sql_secure.tf": {
+   "checks": [],
+   "error": null,
+   "file": "samples/safe/03_azure_sql_secure.tf",
+   "findings": [],
+   "status": "PASS"
+  },
+  "samples/safe/04_gcp_iam_viewer.tf": {
+   "checks": [],
+   "error": null,
+   "file": "samples/safe/04_gcp_iam_viewer.tf",
+   "findings": [],
+   "status": "PASS"
+  },
+  "samples/safe/05_aws_s3_policy_specific.tf": {
+   "checks": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "resource": "aws_s3_bucket_policy.app_read",
+     "status": "PASS"
+    }
+   ],
+   "error": null,
+   "file": "samples/safe/05_aws_s3_policy_specific.tf",
+   "findings": [],
+   "status": "PASS"
+  },
+  "samples/safe/06_gcp_storage_private.tf": {
+   "checks": [],
+   "error": null,
+   "file": "samples/safe/06_gcp_storage_private.tf",
+   "findings": [],
+   "status": "PASS"
+  },
+  "samples/safe/11_azure_nsg_office_ssh.tf": {
+   "checks": [
+    {
+     "cloud": "azure",
+     "policy": "CG-NET-01",
+     "resource": "azurerm_network_security_group.office",
+     "status": "PASS"
+    },
+    {
+     "cloud": "azure",
+     "policy": "CG-NET-01",
+     "resource": "azurerm_network_security_rule.ssh_office",
+     "status": "PASS"
+    }
+   ],
+   "error": null,
+   "file": "samples/safe/11_azure_nsg_office_ssh.tf",
+   "findings": [],
+   "status": "PASS"
+  },
+  "samples/safe/12_azure_nsg_inline_https.tf": {
+   "checks": [
+    {
+     "cloud": "azure",
+     "policy": "CG-NET-01",
+     "resource": "azurerm_network_security_group.web",
+     "status": "PASS"
+    }
+   ],
+   "error": null,
+   "file": "samples/safe/12_azure_nsg_inline_https.tf",
+   "findings": [],
+   "status": "PASS"
+  },
+  "samples/safe/15_gcp_fw_office_ssh.tf": {
+   "checks": [
+    {
+     "cloud": "gcp",
+     "policy": "CG-NET-01",
+     "resource": "google_compute_firewall.ssh_office",
+     "status": "PASS"
+    }
+   ],
+   "error": null,
+   "file": "samples/safe/15_gcp_fw_office_ssh.tf",
+   "findings": [],
+   "status": "PASS"
+  },
+  "samples/safe/18_azure_storage_private.tf": {
+   "checks": [
+    {
+     "cloud": "azure",
+     "policy": "CG-STO-01",
+     "resource": "azurerm_storage_account.private",
+     "status": "PASS"
+    },
+    {
+     "cloud": "azure",
+     "policy": "CG-STO-01",
+     "resource": "azurerm_storage_container.reports",
+     "status": "PASS"
+    }
+   ],
+   "error": null,
+   "file": "samples/safe/18_azure_storage_private.tf",
+   "findings": [],
+   "status": "PASS"
+  },
+  "samples/safe/26_aws_s3_deny_insecure.tf": {
+   "checks": [
+    {
+     "cloud": "aws",
+     "policy": "CG-STO-01",
+     "resource": "aws_s3_bucket_policy.deny_insecure",
+     "status": "PASS"
+    }
+   ],
+   "error": null,
+   "file": "samples/safe/26_aws_s3_deny_insecure.tf",
+   "findings": [],
+   "status": "PASS"
+  },
+  "samples/safe/32_gcp_policy_deny_admin.tf": {
+   "checks": [
+    {
+     "cloud": "gcp",
+     "policy": "CG-NET-01",
+     "resource": "google_compute_firewall_policy_rule.deny_admin",
+     "status": "PASS"
+    }
+   ],
+   "error": null,
+   "file": "samples/safe/32_gcp_policy_deny_admin.tf",
+   "findings": [],
+   "status": "PASS"
+  },
+  "samples/safe/37_azure_storage_v5_default.tf": {
+   "checks": [
+    {
+     "cloud": "azure",
+     "policy": "CG-STO-01",
+     "resource": "azurerm_storage_account.archive",
+     "status": "PASS"
+    },
+    {
+     "cloud": "azure",
+     "policy": "CG-STO-01",
+     "resource": "azurerm_storage_container.backup",
+     "status": "PASS"
+    }
+   ],
+   "error": null,
+   "file": "samples/safe/37_azure_storage_v5_default.tf",
+   "findings": [],
+   "status": "PASS"
+  }
+ },
+ "folders": {
+  "infra": [
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket.reports",
+      "status": "PASS"
+     },
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_public_access_block.reports",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "infra/01_aws_s3_private.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-NET-01",
+      "resource": "aws_security_group.web",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "infra/02_aws_sg_office_ssh.tf",
+    "findings": [],
+    "status": "PASS"
+   }
+  ],
+  "samples": [
+   {
+    "checks": [],
+    "error": "UnexpectedToken: Unexpected token Token('$END', '') at line 5, column 1.\nExpected one of: \n\t* RBRACE\n",
+    "file": "samples/error/25_syntax_error.tf",
+    "findings": [],
+    "status": "ERROR"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-NET-01",
+      "resource": "aws_security_group.admin",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/22_aws_port_variable.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-NET-01",
+      "reason": "출발지·포트·프로토콜 중 변수·표현식 값이 있어 관리자 포트 공개 여부를 확인할 수 없음 (검토 필요)",
+      "resource": "aws_security_group.admin",
+      "rule": "AWS_ADMIN_PORT_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "resource": "azurerm_network_security_rule.ssh_variable",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/23_azure_nsg_source_variable.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "reason": "값을 확인할 수 없어 관리자 포트 공개 여부를 판단할 수 없음: 출발지 (검토 필요)",
+      "resource": "azurerm_network_security_rule.ssh_variable",
+      "rule": "AZURE_ADMIN_PORT_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket.logs",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/27_aws_bucket_no_block.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "reason": "S3 버킷에 연결된 공개 차단 설정(aws_s3_bucket_public_access_block)이 없어 공개 여부를 확인할 수 없음 (검토 필요)",
+      "resource": "aws_s3_bucket.logs",
+      "rule": "AWS_S3_NO_PUBLIC_BLOCK",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_public_access_block.variable",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/28_aws_s3_flag_variable.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "reason": "S3 공개 접근 차단 옵션 값을 확인할 수 없음(변수·표현식·생략): block_public_acls",
+      "resource": "aws_s3_bucket_public_access_block.variable",
+      "rule": "AWS_S3_BLOCK_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_policy.generated",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/29_aws_s3_policy_expression.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "reason": "S3 정책을 읽을 수 없음(생략·변수·표현식, jsonencode 포함)",
+      "resource": "aws_s3_bucket_policy.generated",
+      "rule": "AWS_S3_POLICY_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_policy.invalid_json",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/31_aws_s3_invalid_policy_json.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "reason": "S3 정책을 JSON 문서로 해석할 수 없음",
+      "resource": "aws_s3_bucket_policy.invalid_json",
+      "rule": "AWS_S3_POLICY_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "resource": "google_compute_region_network_firewall_policy_rule.complex_source",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/35_gcp_regional_policy_address_group.tf",
+    "findings": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "reason": "GCP 방화벽 정책 규칙을 확정 판정할 수 없음: 출발지 (검토 필요)",
+      "resource": "google_compute_region_network_firewall_policy_rule.complex_source",
+      "rule": "GCP_FIREWALL_POLICY_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_account.unknown",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/38_azure_storage_version_unknown.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "exposure": "undetermined",
+      "policy": "CG-STO-01",
+      "reason": "익명 공개 허용 설정 생략, 기본값을 정할 수 없음 (azurerm 버전 정보 없음) (검토 필요)",
+      "resource": "azurerm_storage_account.unknown",
+      "rule": "AZURE_STORAGE_PUBLIC_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_account.site",
+      "status": "PASS"
+     },
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_account_static_website.site",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/39_azure_static_website.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "exposure": "intentional_static_website",
+      "policy": "CG-STO-01",
+      "reason": "정적 웹사이트 자원: $web 컨테이너는 계정의 익명 접근 설정과 무관하게 공개됨 — 의도된 공개인지 확인 필요 (검토 필요)",
+      "resource": "azurerm_storage_account_static_website.site",
+      "rule": "AZURE_STORAGE_STATIC_WEBSITE",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-NET-01",
+      "resource": "aws_security_group.bastion",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/07_aws_sg_ssh_open.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-NET-01",
+      "reason": "인터넷 전체에 SSH(22), RDP(3389) 또는 전체 포트 범위 노출",
+      "resource": "aws_security_group.bastion",
+      "rule": "AWS_PUBLIC_ADMIN_PORT",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [],
+    "error": null,
+    "file": "samples/risky/08_azure_sql_hardcoded.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "policy": null,
+      "reason": "관리자 비밀번호가 설정 파일에 직접 기록됨 (실제 값은 출력하지 않음)",
+      "resource": "azurerm_mssql_server.legacy",
+      "rule": "AZURE_HARDCODED_PASSWORD",
+      "verdict": "BLOCK"
+     },
+     {
+      "cloud": "azure",
+      "policy": null,
+      "reason": "오래된 TLS 최소 버전(1.0 또는 1.1) 허용",
+      "resource": "azurerm_mssql_server.legacy",
+      "rule": "AZURE_OLD_TLS",
+      "verdict": "BLOCK"
+     },
+     {
+      "cloud": "azure",
+      "policy": null,
+      "reason": "DB 방화벽이 전체 IPv4 범위를 허용함",
+      "resource": "azurerm_mssql_firewall_rule.allow_all",
+      "rule": "AZURE_WIDE_FIREWALL",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [],
+    "error": null,
+    "file": "samples/risky/09_gcp_owner_and_key.tf",
+    "findings": [
+     {
+      "cloud": "gcp",
+      "policy": null,
+      "reason": "계정에 프로젝트 전체 관리자(Owner) 권한을 부여함",
+      "resource": "google_project_iam_member.contractor",
+      "rule": "GCP_PROJECT_OWNER",
+      "verdict": "BLOCK"
+     },
+     {
+      "cloud": "gcp",
+      "policy": null,
+      "reason": "서비스 계정 장기 키 생성: 프로젝트 정책상 차단 (데모 기준)",
+      "resource": "google_service_account_key.ci_key",
+      "rule": "GCP_SERVICE_ACCOUNT_KEY",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_public_access_block.open",
+      "status": "BLOCK"
+     },
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_policy.open",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/10_aws_s3_public.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "reason": "S3 공개 접근 차단 옵션 비활성화: block_public_acls, block_public_policy, ignore_public_acls, restrict_public_buckets",
+      "resource": "aws_s3_bucket_public_access_block.open",
+      "rule": "AWS_S3_PUBLIC_BLOCK_OFF",
+      "verdict": "BLOCK"
+     },
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "reason": "S3 정책에서 Effect=Allow이면서 Principal=*로 공개 접근을 허용하는 설정",
+      "resource": "aws_s3_bucket_policy.open",
+      "rule": "AWS_S3_WILDCARD_PRINCIPAL",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "resource": "azurerm_network_security_rule.rdp_open",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/13_azure_nsg_rdp_open.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "reason": "인터넷 전체에서 SSH(22) 또는 RDP(3389) 인바운드 허용",
+      "resource": "azurerm_network_security_rule.rdp_open",
+      "rule": "AZURE_PUBLIC_ADMIN_PORT",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "resource": "azurerm_network_security_group.range_open",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/14_azure_nsg_range_open.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "reason": "인터넷 전체에서 SSH(22) 또는 RDP(3389) 인바운드 허용 (내부 규칙 'allow-low-ports')",
+      "resource": "azurerm_network_security_group.range_open",
+      "rule": "AZURE_PUBLIC_ADMIN_PORT",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "resource": "google_compute_firewall.ssh_open",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/16_gcp_fw_ssh_open.tf",
+    "findings": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "reason": "인터넷 전체(0.0.0.0/0 또는 ::/0)에서 SSH(22) 또는 RDP(3389) 접속 허용",
+      "resource": "google_compute_firewall.ssh_open",
+      "rule": "GCP_PUBLIC_ADMIN_PORT",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "resource": "google_compute_firewall.all_tcp_open",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/17_gcp_fw_all_ports.tf",
+    "findings": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "reason": "인터넷 전체(0.0.0.0/0 또는 ::/0)에서 SSH(22) 또는 RDP(3389) 접속 허용",
+      "resource": "google_compute_firewall.all_tcp_open",
+      "rule": "GCP_PUBLIC_ADMIN_PORT",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_account.public",
+      "status": "BLOCK"
+     },
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_container.images",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/19_azure_storage_public.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "exposure": "anonymous_access_configured",
+      "policy": "CG-STO-01",
+      "reason": "계정이 컨테이너 익명 공개를 허용함 (명시 설정) [네트워크: 공개, 판정과 무관] (Terraform 정적 구성 기준이며 실제 클라우드 접근을 확인한 것은 아님)",
+      "resource": "azurerm_storage_account.public",
+      "rule": "AZURE_STORAGE_PUBLIC_ALLOWED",
+      "verdict": "BLOCK"
+     },
+     {
+      "cloud": "azure",
+      "exposure": "anonymous_access_configured",
+      "policy": "CG-STO-01",
+      "reason": "컨테이너 접근 수준이 blob/container(익명 읽기 선언) — 연결된 계정 azurerm_storage_account.public (Terraform 정적 구성 기준이며 실제 클라우드 접근을 확인한 것은 아님)",
+      "resource": "azurerm_storage_container.images",
+      "rule": "AZURE_STORAGE_CONTAINER_PUBLIC",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_policy.allow_list_wildcard",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/30_aws_s3_allow_list_wildcard.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "reason": "S3 정책에서 Effect=Allow이면서 Principal=*로 공개 접근을 허용하는 설정",
+      "resource": "aws_s3_bucket_policy.allow_list_wildcard",
+      "rule": "AWS_S3_WILDCARD_PRINCIPAL",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "resource": "google_compute_firewall_policy_rule.open_ssh",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/33_gcp_hierarchical_policy_ssh.tf",
+    "findings": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "reason": "GCP 방화벽 정책 규칙이 인터넷 전체에서 TCP 22/3389 인바운드를 허용하도록 설정됨",
+      "resource": "google_compute_firewall_policy_rule.open_ssh",
+      "rule": "GCP_FIREWALL_POLICY_PUBLIC_ADMIN_PORT",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "resource": "google_compute_network_firewall_policy_rule.open_rdp",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/34_gcp_network_policy_rdp.tf",
+    "findings": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "reason": "GCP 방화벽 정책 규칙이 인터넷 전체에서 TCP 22/3389 인바운드를 허용하도록 설정됨",
+      "resource": "google_compute_network_firewall_policy_rule.open_rdp",
+      "rule": "GCP_FIREWALL_POLICY_PUBLIC_ADMIN_PORT",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_account.logs",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/36_azure_storage_v4_default.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "exposure": "public_access_possible",
+      "policy": "CG-STO-01",
+      "reason": "익명 공개 허용 설정 생략 → 기본값 true (버전 제약 ~> 4.0 → 가능한 메이저 v4) [네트워크: 공개, 판정과 무관] (Terraform 정적 구성 기준이며 실제 클라우드 접근을 확인한 것은 아님)",
+      "resource": "azurerm_storage_account.logs",
+      "rule": "AZURE_STORAGE_PUBLIC_ALLOWED",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_container.downloads",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/40_azure_container_external_account.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "exposure": "public_access_possible",
+      "policy": "CG-STO-01",
+      "reason": "컨테이너 접근 수준이 blob/container(익명 읽기 선언) — 연결된 계정을 확인할 수 없음 (Terraform 정적 구성 기준이며 실제 클라우드 접근을 확인한 것은 아님)",
+      "resource": "azurerm_storage_container.downloads",
+      "rule": "AZURE_STORAGE_CONTAINER_PUBLIC",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket.reports",
+      "status": "PASS"
+     },
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_public_access_block.reports",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/01_aws_s3_private.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-NET-01",
+      "resource": "aws_security_group.web",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/02_aws_sg_office_ssh.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [],
+    "error": null,
+    "file": "samples/safe/03_azure_sql_secure.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [],
+    "error": null,
+    "file": "samples/safe/04_gcp_iam_viewer.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_policy.app_read",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/05_aws_s3_policy_specific.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [],
+    "error": null,
+    "file": "samples/safe/06_gcp_storage_private.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "resource": "azurerm_network_security_group.office",
+      "status": "PASS"
+     },
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "resource": "azurerm_network_security_rule.ssh_office",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/11_azure_nsg_office_ssh.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "resource": "azurerm_network_security_group.web",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/12_azure_nsg_inline_https.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "resource": "google_compute_firewall.ssh_office",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/15_gcp_fw_office_ssh.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_account.private",
+      "status": "PASS"
+     },
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_container.reports",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/18_azure_storage_private.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_policy.deny_insecure",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/26_aws_s3_deny_insecure.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "resource": "google_compute_firewall_policy_rule.deny_admin",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/32_gcp_policy_deny_admin.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_account.archive",
+      "status": "REVIEW"
+     },
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_container.backup",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/37_azure_storage_v5_default.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "exposure": "undetermined",
+      "policy": "CG-STO-01",
+      "reason": "익명 공개 허용 설정 생략, 기본값을 정할 수 없음 (버전 제약 ~> 4.0 + ~> 5.0 → 가능한 메이저 없음) (검토 필요)",
+      "resource": "azurerm_storage_account.archive",
+      "rule": "AZURE_STORAGE_PUBLIC_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   }
+  ],
+  "samples/error": [
+   {
+    "checks": [],
+    "error": "UnexpectedToken: Unexpected token Token('$END', '') at line 5, column 1.\nExpected one of: \n\t* RBRACE\n",
+    "file": "samples/error/25_syntax_error.tf",
+    "findings": [],
+    "status": "ERROR"
+   }
+  ],
+  "samples/review": [
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-NET-01",
+      "resource": "aws_security_group.admin",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/22_aws_port_variable.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-NET-01",
+      "reason": "출발지·포트·프로토콜 중 변수·표현식 값이 있어 관리자 포트 공개 여부를 확인할 수 없음 (검토 필요)",
+      "resource": "aws_security_group.admin",
+      "rule": "AWS_ADMIN_PORT_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "resource": "azurerm_network_security_rule.ssh_variable",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/23_azure_nsg_source_variable.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "reason": "값을 확인할 수 없어 관리자 포트 공개 여부를 판단할 수 없음: 출발지 (검토 필요)",
+      "resource": "azurerm_network_security_rule.ssh_variable",
+      "rule": "AZURE_ADMIN_PORT_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket.logs",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/27_aws_bucket_no_block.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "reason": "S3 버킷에 연결된 공개 차단 설정(aws_s3_bucket_public_access_block)이 없어 공개 여부를 확인할 수 없음 (검토 필요)",
+      "resource": "aws_s3_bucket.logs",
+      "rule": "AWS_S3_NO_PUBLIC_BLOCK",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_public_access_block.variable",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/28_aws_s3_flag_variable.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "reason": "S3 공개 접근 차단 옵션 값을 확인할 수 없음(변수·표현식·생략): block_public_acls",
+      "resource": "aws_s3_bucket_public_access_block.variable",
+      "rule": "AWS_S3_BLOCK_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_policy.generated",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/29_aws_s3_policy_expression.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "reason": "S3 정책을 읽을 수 없음(생략·변수·표현식, jsonencode 포함)",
+      "resource": "aws_s3_bucket_policy.generated",
+      "rule": "AWS_S3_POLICY_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_policy.invalid_json",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/31_aws_s3_invalid_policy_json.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "reason": "S3 정책을 JSON 문서로 해석할 수 없음",
+      "resource": "aws_s3_bucket_policy.invalid_json",
+      "rule": "AWS_S3_POLICY_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "resource": "google_compute_region_network_firewall_policy_rule.complex_source",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/35_gcp_regional_policy_address_group.tf",
+    "findings": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "reason": "GCP 방화벽 정책 규칙을 확정 판정할 수 없음: 출발지 (검토 필요)",
+      "resource": "google_compute_region_network_firewall_policy_rule.complex_source",
+      "rule": "GCP_FIREWALL_POLICY_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_account.unknown",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/38_azure_storage_version_unknown.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "exposure": "undetermined",
+      "policy": "CG-STO-01",
+      "reason": "익명 공개 허용 설정 생략, 기본값을 정할 수 없음 (azurerm 버전 정보 없음) (검토 필요)",
+      "resource": "azurerm_storage_account.unknown",
+      "rule": "AZURE_STORAGE_PUBLIC_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_account.site",
+      "status": "PASS"
+     },
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_account_static_website.site",
+      "status": "REVIEW"
+     }
+    ],
+    "error": null,
+    "file": "samples/review/39_azure_static_website.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "exposure": "intentional_static_website",
+      "policy": "CG-STO-01",
+      "reason": "정적 웹사이트 자원: $web 컨테이너는 계정의 익명 접근 설정과 무관하게 공개됨 — 의도된 공개인지 확인 필요 (검토 필요)",
+      "resource": "azurerm_storage_account_static_website.site",
+      "rule": "AZURE_STORAGE_STATIC_WEBSITE",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   }
+  ],
+  "samples/risky": [
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-NET-01",
+      "resource": "aws_security_group.bastion",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/07_aws_sg_ssh_open.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-NET-01",
+      "reason": "인터넷 전체에 SSH(22), RDP(3389) 또는 전체 포트 범위 노출",
+      "resource": "aws_security_group.bastion",
+      "rule": "AWS_PUBLIC_ADMIN_PORT",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [],
+    "error": null,
+    "file": "samples/risky/08_azure_sql_hardcoded.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "policy": null,
+      "reason": "관리자 비밀번호가 설정 파일에 직접 기록됨 (실제 값은 출력하지 않음)",
+      "resource": "azurerm_mssql_server.legacy",
+      "rule": "AZURE_HARDCODED_PASSWORD",
+      "verdict": "BLOCK"
+     },
+     {
+      "cloud": "azure",
+      "policy": null,
+      "reason": "오래된 TLS 최소 버전(1.0 또는 1.1) 허용",
+      "resource": "azurerm_mssql_server.legacy",
+      "rule": "AZURE_OLD_TLS",
+      "verdict": "BLOCK"
+     },
+     {
+      "cloud": "azure",
+      "policy": null,
+      "reason": "DB 방화벽이 전체 IPv4 범위를 허용함",
+      "resource": "azurerm_mssql_firewall_rule.allow_all",
+      "rule": "AZURE_WIDE_FIREWALL",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [],
+    "error": null,
+    "file": "samples/risky/09_gcp_owner_and_key.tf",
+    "findings": [
+     {
+      "cloud": "gcp",
+      "policy": null,
+      "reason": "계정에 프로젝트 전체 관리자(Owner) 권한을 부여함",
+      "resource": "google_project_iam_member.contractor",
+      "rule": "GCP_PROJECT_OWNER",
+      "verdict": "BLOCK"
+     },
+     {
+      "cloud": "gcp",
+      "policy": null,
+      "reason": "서비스 계정 장기 키 생성: 프로젝트 정책상 차단 (데모 기준)",
+      "resource": "google_service_account_key.ci_key",
+      "rule": "GCP_SERVICE_ACCOUNT_KEY",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_public_access_block.open",
+      "status": "BLOCK"
+     },
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_policy.open",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/10_aws_s3_public.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "reason": "S3 공개 접근 차단 옵션 비활성화: block_public_acls, block_public_policy, ignore_public_acls, restrict_public_buckets",
+      "resource": "aws_s3_bucket_public_access_block.open",
+      "rule": "AWS_S3_PUBLIC_BLOCK_OFF",
+      "verdict": "BLOCK"
+     },
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "reason": "S3 정책에서 Effect=Allow이면서 Principal=*로 공개 접근을 허용하는 설정",
+      "resource": "aws_s3_bucket_policy.open",
+      "rule": "AWS_S3_WILDCARD_PRINCIPAL",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "resource": "azurerm_network_security_rule.rdp_open",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/13_azure_nsg_rdp_open.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "reason": "인터넷 전체에서 SSH(22) 또는 RDP(3389) 인바운드 허용",
+      "resource": "azurerm_network_security_rule.rdp_open",
+      "rule": "AZURE_PUBLIC_ADMIN_PORT",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "resource": "azurerm_network_security_group.range_open",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/14_azure_nsg_range_open.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "reason": "인터넷 전체에서 SSH(22) 또는 RDP(3389) 인바운드 허용 (내부 규칙 'allow-low-ports')",
+      "resource": "azurerm_network_security_group.range_open",
+      "rule": "AZURE_PUBLIC_ADMIN_PORT",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "resource": "google_compute_firewall.ssh_open",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/16_gcp_fw_ssh_open.tf",
+    "findings": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "reason": "인터넷 전체(0.0.0.0/0 또는 ::/0)에서 SSH(22) 또는 RDP(3389) 접속 허용",
+      "resource": "google_compute_firewall.ssh_open",
+      "rule": "GCP_PUBLIC_ADMIN_PORT",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "resource": "google_compute_firewall.all_tcp_open",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/17_gcp_fw_all_ports.tf",
+    "findings": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "reason": "인터넷 전체(0.0.0.0/0 또는 ::/0)에서 SSH(22) 또는 RDP(3389) 접속 허용",
+      "resource": "google_compute_firewall.all_tcp_open",
+      "rule": "GCP_PUBLIC_ADMIN_PORT",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_account.public",
+      "status": "BLOCK"
+     },
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_container.images",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/19_azure_storage_public.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "exposure": "anonymous_access_configured",
+      "policy": "CG-STO-01",
+      "reason": "계정이 컨테이너 익명 공개를 허용함 (명시 설정) [네트워크: 공개, 판정과 무관] (Terraform 정적 구성 기준이며 실제 클라우드 접근을 확인한 것은 아님)",
+      "resource": "azurerm_storage_account.public",
+      "rule": "AZURE_STORAGE_PUBLIC_ALLOWED",
+      "verdict": "BLOCK"
+     },
+     {
+      "cloud": "azure",
+      "exposure": "anonymous_access_configured",
+      "policy": "CG-STO-01",
+      "reason": "컨테이너 접근 수준이 blob/container(익명 읽기 선언) — 연결된 계정 azurerm_storage_account.public (Terraform 정적 구성 기준이며 실제 클라우드 접근을 확인한 것은 아님)",
+      "resource": "azurerm_storage_container.images",
+      "rule": "AZURE_STORAGE_CONTAINER_PUBLIC",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_policy.allow_list_wildcard",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/30_aws_s3_allow_list_wildcard.tf",
+    "findings": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "reason": "S3 정책에서 Effect=Allow이면서 Principal=*로 공개 접근을 허용하는 설정",
+      "resource": "aws_s3_bucket_policy.allow_list_wildcard",
+      "rule": "AWS_S3_WILDCARD_PRINCIPAL",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "resource": "google_compute_firewall_policy_rule.open_ssh",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/33_gcp_hierarchical_policy_ssh.tf",
+    "findings": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "reason": "GCP 방화벽 정책 규칙이 인터넷 전체에서 TCP 22/3389 인바운드를 허용하도록 설정됨",
+      "resource": "google_compute_firewall_policy_rule.open_ssh",
+      "rule": "GCP_FIREWALL_POLICY_PUBLIC_ADMIN_PORT",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "resource": "google_compute_network_firewall_policy_rule.open_rdp",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/34_gcp_network_policy_rdp.tf",
+    "findings": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "reason": "GCP 방화벽 정책 규칙이 인터넷 전체에서 TCP 22/3389 인바운드를 허용하도록 설정됨",
+      "resource": "google_compute_network_firewall_policy_rule.open_rdp",
+      "rule": "GCP_FIREWALL_POLICY_PUBLIC_ADMIN_PORT",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_account.logs",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/36_azure_storage_v4_default.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "exposure": "public_access_possible",
+      "policy": "CG-STO-01",
+      "reason": "익명 공개 허용 설정 생략 → 기본값 true (버전 제약 ~> 4.0 → 가능한 메이저 v4) [네트워크: 공개, 판정과 무관] (Terraform 정적 구성 기준이며 실제 클라우드 접근을 확인한 것은 아님)",
+      "resource": "azurerm_storage_account.logs",
+      "rule": "AZURE_STORAGE_PUBLIC_ALLOWED",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_container.downloads",
+      "status": "BLOCK"
+     }
+    ],
+    "error": null,
+    "file": "samples/risky/40_azure_container_external_account.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "exposure": "public_access_possible",
+      "policy": "CG-STO-01",
+      "reason": "컨테이너 접근 수준이 blob/container(익명 읽기 선언) — 연결된 계정을 확인할 수 없음 (Terraform 정적 구성 기준이며 실제 클라우드 접근을 확인한 것은 아님)",
+      "resource": "azurerm_storage_container.downloads",
+      "rule": "AZURE_STORAGE_CONTAINER_PUBLIC",
+      "verdict": "BLOCK"
+     }
+    ],
+    "status": "BLOCK"
+   }
+  ],
+  "samples/safe": [
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket.reports",
+      "status": "PASS"
+     },
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_public_access_block.reports",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/01_aws_s3_private.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-NET-01",
+      "resource": "aws_security_group.web",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/02_aws_sg_office_ssh.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [],
+    "error": null,
+    "file": "samples/safe/03_azure_sql_secure.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [],
+    "error": null,
+    "file": "samples/safe/04_gcp_iam_viewer.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_policy.app_read",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/05_aws_s3_policy_specific.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [],
+    "error": null,
+    "file": "samples/safe/06_gcp_storage_private.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "resource": "azurerm_network_security_group.office",
+      "status": "PASS"
+     },
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "resource": "azurerm_network_security_rule.ssh_office",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/11_azure_nsg_office_ssh.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-NET-01",
+      "resource": "azurerm_network_security_group.web",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/12_azure_nsg_inline_https.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "resource": "google_compute_firewall.ssh_office",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/15_gcp_fw_office_ssh.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_account.private",
+      "status": "PASS"
+     },
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_container.reports",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/18_azure_storage_private.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "aws",
+      "policy": "CG-STO-01",
+      "resource": "aws_s3_bucket_policy.deny_insecure",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/26_aws_s3_deny_insecure.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "gcp",
+      "policy": "CG-NET-01",
+      "resource": "google_compute_firewall_policy_rule.deny_admin",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/32_gcp_policy_deny_admin.tf",
+    "findings": [],
+    "status": "PASS"
+   },
+   {
+    "checks": [
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_account.archive",
+      "status": "REVIEW"
+     },
+     {
+      "cloud": "azure",
+      "policy": "CG-STO-01",
+      "resource": "azurerm_storage_container.backup",
+      "status": "PASS"
+     }
+    ],
+    "error": null,
+    "file": "samples/safe/37_azure_storage_v5_default.tf",
+    "findings": [
+     {
+      "cloud": "azure",
+      "exposure": "undetermined",
+      "policy": "CG-STO-01",
+      "reason": "익명 공개 허용 설정 생략, 기본값을 정할 수 없음 (버전 제약 ~> 4.0 + ~> 5.0 → 가능한 메이저 없음) (검토 필요)",
+      "resource": "azurerm_storage_account.archive",
+      "rule": "AZURE_STORAGE_PUBLIC_UNRESOLVED",
+      "verdict": "REVIEW"
+     }
+    ],
+    "status": "REVIEW"
+   }
+  ]
+ }
+}

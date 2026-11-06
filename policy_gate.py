@@ -67,6 +67,11 @@ RULES = {
     "AZURE_STORAGE_PUBLIC_UNRESOLVED": {"cloud": "azure", "policy": "CG-STO-01", "verdict": "REVIEW"},
     "AZURE_STORAGE_STATIC_WEBSITE":    {"cloud": "azure", "policy": "CG-STO-01", "verdict": "REVIEW"},
     "AZURE_STORAGE_UNSUPPORTED":       {"cloud": "azure", "policy": "CG-STO-01", "verdict": "REVIEW"},
+    "GCP_STORAGE_PUBLIC_IAM":          {"cloud": "gcp", "policy": "CG-STO-01", "verdict": "BLOCK"},
+    "GCP_STORAGE_PUBLIC_ACL":          {"cloud": "gcp", "policy": "CG-STO-01", "verdict": "BLOCK"},
+    "GCP_STORAGE_PAP_NOT_ENFORCED":    {"cloud": "gcp", "policy": "CG-STO-01", "verdict": "REVIEW"},
+    "GCP_STORAGE_PUBLIC_UNRESOLVED":   {"cloud": "gcp", "policy": "CG-STO-01", "verdict": "REVIEW"},
+    "GCP_STORAGE_UNSUPPORTED":         {"cloud": "gcp", "policy": "CG-STO-01", "verdict": "REVIEW"},
     "GCP_PUBLIC_ADMIN_PORT":     {"cloud": "gcp",   "policy": "CG-NET-01", "verdict": "BLOCK"},
     "GCP_ADMIN_PORT_UNRESOLVED": {"cloud": "gcp",   "policy": "CG-NET-01", "verdict": "REVIEW"},
     "GCP_FIREWALL_POLICY_PUBLIC_ADMIN_PORT": {"cloud": "gcp", "policy": "CG-NET-01", "verdict": "BLOCK"},
@@ -77,7 +82,7 @@ RULES = {
 
 # 공통 정책별로 "현재 검사기가 실제로 검사하는" 자원 종류.
 # 여기 있는 자원은 위반이 없어도 checks 목록에 PASS로 기록된다.
-# (GCP 저장소는 PR 6에서 규칙과 함께 추가한다.
+# (GCP 저장소는 v3 PR 6에서 추가: 버킷 + IAM 6종 + ACL 6종.
 #  Azure 저장소는 자원 종류만으로 대상을 정할 수 없는 azapi·템플릿 배포가 있어
 #  build_checks 에서 is_azure_storage_check_target() 로 따로 판단한다.)
 POLICY_TARGETS = {
@@ -90,7 +95,30 @@ POLICY_TARGETS = {
         "google_compute_region_network_firewall_policy_rule",
     },
     ("CG-STO-01", "aws"): {"aws_s3_bucket", "aws_s3_bucket_public_access_block", "aws_s3_bucket_policy"},
+    ("CG-STO-01", "gcp"): {
+        "google_storage_bucket",
+        "google_storage_bucket_iam_member", "google_storage_bucket_iam_binding",
+        "google_storage_bucket_iam_policy",
+        "google_storage_managed_folder_iam_member", "google_storage_managed_folder_iam_binding",
+        "google_storage_managed_folder_iam_policy",
+        "google_storage_bucket_acl", "google_storage_object_acl", "google_storage_default_object_acl",
+        "google_storage_bucket_access_control", "google_storage_object_access_control",
+        "google_storage_default_object_access_control",
+    },
 }
+
+# 정책 × 클라우드 지원 범위 (v3 PR 6). Summary 의 행렬이 이 표와 checks 기록으로 만들어진다.
+# 자원 목록은 policy_support_resources() 가 POLICY_TARGETS·Azure 판단과 같은 출처에서 계산한다
+# (표와 실제 검사 대상이 어긋나지 않게 — tests/test_summary_matrix.py 가 확인).
+POLICY_SUPPORT = {
+    ("CG-NET-01", "aws"): "보안 그룹 인라인·별도 규칙만. 접두사 목록·NACL·WAF 는 보지 않음",
+    ("CG-NET-01", "azure"): "NSG 규칙만. Azure Firewall·서비스 태그 세부 범위는 보지 않음",
+    ("CG-NET-01", "gcp"): "VPC 방화벽·방화벽 정책 규칙 3종. *_with_rules 등 다른 규칙 형식·주소 그룹은 REVIEW",
+    ("CG-STO-01", "aws"): "버킷·공개 차단·버킷 정책. 계정 수준 공개 차단·ACL 자원은 보지 않음",
+    ("CG-STO-01", "azure"): "계정·컨테이너·정적 웹사이트·azapi. ARM 템플릿 안의 값은 REVIEW, 환경 변수 영향 미반영",
+    ("CG-STO-01", "gcp"): "버킷 PAP·IAM·ACL·Managed Folder. 조직 정책 실효값 미확인(inherited 는 REVIEW)",
+}
+POLICY_CLOUDS = ("aws", "azure", "gcp")
 
 # 판정의 "나쁜 정도". 숫자가 클수록 나쁘다. 여러 결과가 있으면 가장 나쁜 것을 따른다.
 SEVERITY = {"PASS": 0, "REVIEW": 1, "BLOCK": 2, "ERROR": 3}
@@ -1200,20 +1228,230 @@ def make_azure_context(datas, version_context=None, module_dir=None):
             "note": version_context["note"], "module_dir": module_dir}
 
 
+
+# ---------------------------------------------------------------------------
+# GCP Cloud Storage 공개 위험 (CG-STO-01 → GCP, v3 PR 6)
+# 정책: 공개 주체(allUsers·allAuthenticatedUsers)에게 버킷·폴더·객체 권한을 부여하는 선언 자체를 금지.
+#   - 공개 주체가 확정이면 역할과 무관하게 BLOCK (역할이 불명이면 exposure = undetermined)
+#   - 버킷의 공개 접근 방지(PAP)가 enforced 가 아니면 REVIEW (조직 정책에 달려 확인 불가)
+#   - 버킷 연결은 exposure 에만 쓰고 판정을 완화하지 않는다
+# 근거: docs.cloud.google.com/storage/docs/public-access-prevention, .../uniform-bucket-level-access,
+#       .../access-control/lists, Terraform google provider storage_bucket_iam·storage_bucket_acl 문서
+# ---------------------------------------------------------------------------
+
+GCP_BUCKET = "google_storage_bucket"
+GCP_IAM_TYPES = {
+    "google_storage_bucket_iam_member", "google_storage_bucket_iam_binding", "google_storage_bucket_iam_policy",
+    "google_storage_managed_folder_iam_member", "google_storage_managed_folder_iam_binding",
+    "google_storage_managed_folder_iam_policy",
+}
+GCP_ACL_LIST_TYPES = {"google_storage_bucket_acl", "google_storage_object_acl", "google_storage_default_object_acl"}
+GCP_ACL_ENTITY_TYPES = {"google_storage_bucket_access_control", "google_storage_object_access_control",
+                        "google_storage_default_object_access_control"}
+# CG-STO-01 범위 밖으로 분류한 google_storage_* 자원 (권한을 부여하지 않음). 판정·checks 없음.
+# 검사 대상(POLICY_TARGETS) + 이 목록이 provider 의 storage 자원 전체를 덮는지 tests/test_resource_catalog.py 가 확인한다.
+GCP_STORAGE_OUT_OF_SCOPE = {
+    "google_storage_bucket_object",           # 객체 업로드 (ACL 인수 없음, 기본 객체 ACL 을 따름)
+    "google_storage_managed_folder",          # 폴더 자체는 권한 없음 (IAM 은 *_iam_* 에서 검사)
+    "google_storage_folder",                  # 계층형 네임스페이스 폴더
+    "google_storage_notification", "google_storage_hmac_key", "google_storage_transfer_job",
+    "google_storage_transfer_agent_pool", "google_storage_anywhere_cache", "google_storage_batch_operations_job",
+    "google_storage_insights_dataset_config", "google_storage_insights_report_config",
+    "google_storage_control_folder_intelligence_config", "google_storage_control_organization_intelligence_config",
+    "google_storage_control_project_intelligence_config", "google_storage_control_project_feature_config",
+    "google_storage_ftp_server", "google_storage_ftp_user",   # SFTP: 인증 사용자용, 익명 공개 경로 아님 (한계에 기록)
+}
+GCP_PUBLIC_MEMBERS = {"allusers": "allUsers", "allauthenticatedusers": "allAuthenticatedUsers",
+                      "principalset://goog/public:all": "allUsers"}
+GCP_MEMBER_PREFIXES = ("user:", "serviceaccount:", "group:", "domain:", "projectowner:", "projecteditor:",
+                       "projectviewer:", "principal://", "principalset://", "deleted:")
+GCP_ACL_ENTITY_PREFIXES = ("user-", "group-", "domain-", "project-")
+GCP_PUBLIC_PREDEFINED = {"publicread": ("allUsers", "읽기"), "publicreadwrite": ("allUsers", "읽기·쓰기"),
+                         "authenticatedread": ("allAuthenticatedUsers", "읽기")}
+GCP_ROLE_LEVEL = {
+    "roles/storage.objectviewer": "읽기", "roles/storage.legacyobjectreader": "읽기",
+    "roles/storage.legacybucketreader": "읽기(목록)",
+    "roles/storage.objectcreator": "쓰기", "roles/storage.objectuser": "읽기·쓰기",
+    "roles/storage.legacybucketwriter": "쓰기",
+    "roles/storage.objectadmin": "관리", "roles/storage.admin": "관리",
+    "roles/storage.legacybucketowner": "관리", "roles/storage.legacyobjectowner": "관리",
+}
+GCP_ACL_ROLE_LEVEL = {"reader": "읽기", "writer": "쓰기", "owner": "관리"}
+_GCP_BUCKET_REF = re.compile(r"^\$\{google_storage_bucket\.([A-Za-z0-9_-]+)(?:\[[^\]]*\])?\.(?:name|id|url|self_link)\}$")
+_GCP_POLICY_DATA_REF = re.compile(r"^\$\{data\.google_iam_policy\.([A-Za-z0-9_-]+)\.policy_data\}$")
+
+
+def data_sources(data):
+    """(type, name, body) for data blocks (resources() 는 resource 블록만 본다)."""
+    for outer in blocks(data.get("data", [])):
+        for data_type, named in outer.items():
+            for name, body in named.items() if isinstance(named, dict) else []:
+                if isinstance(body, dict):
+                    yield data_type, name, body
+
+
+def gcp_member_state(value):
+    """IAM 구성원 하나 → 'allUsers' / 'allAuthenticatedUsers' / False(공개 아님) / None(확인 불가) / 'unknown'(처음 보는 형식)."""
+    if value is None or is_unresolved(value) or isinstance(value, (list, dict)):
+        return None
+    text = string_value(value).strip()
+    lower = text.lower()
+    if lower in GCP_PUBLIC_MEMBERS:
+        return GCP_PUBLIC_MEMBERS[lower]
+    if lower.startswith(GCP_MEMBER_PREFIXES):
+        return False
+    return "unknown"
+
+
+def gcp_acl_entity_state(value):
+    """ACL entity → 'allUsers' / 'allAuthenticatedUsers' / False / None / 'unknown'."""
+    if value is None or is_unresolved(value) or isinstance(value, (list, dict)):
+        return None
+    lower = string_value(value).strip().lower()
+    if lower in ("allusers", "allauthenticatedusers"):
+        return GCP_PUBLIC_MEMBERS[lower]
+    if lower.startswith(GCP_ACL_ENTITY_PREFIXES):
+        return False
+    return "unknown"
+
+
+def gcp_role_level(role):
+    """역할 → 접근 수준 글자. 사용자 정의·Storage 외·변수면 None (권한 불명)."""
+    if role is None or is_unresolved(role):
+        return None
+    lower = string_value(role).strip().lower()
+    if lower in GCP_ROLE_LEVEL:
+        return GCP_ROLE_LEVEL[lower]
+    if lower.startswith("roles/storage."):
+        return "Storage 역할"
+    return None
+
+
+def gcp_bucket_info(body):
+    """버킷 → {'pap': 'enforced'|'inherited'|None, 'ubla': True|False|None, 'website': bool}."""
+    pap = body.get("public_access_prevention")
+    if pap is None:
+        pap_state = "inherited"                        # provider 기본값 "inherited"
+    elif is_unresolved(pap):
+        pap_state = None
+    else:
+        text = string_value(pap).strip().lower()
+        pap_state = {"enforced": "enforced", "inherited": "inherited", "unspecified": "inherited"}.get(text, None)
+    ubla_value = body.get("uniform_bucket_level_access", body.get("bucket_policy_only"))
+    ubla = False if ubla_value is None else bool_state(ubla_value)
+    return {"pap": pap_state, "pap_raw": pap, "ubla": ubla, "website": bool(blocks(body.get("website")))}
+
+
+def build_gcp_index(datas):
+    """같은 폴더(모듈)의 버킷 색인과 google_iam_policy 데이터 소스."""
+    by_ref, by_name, policies = {}, {}, {}
+    for data in datas:
+        for typ, name, body in resources(data):
+            if typ != GCP_BUCKET:
+                continue
+            info = gcp_bucket_info(body)
+            by_ref[name] = info
+            literal = body.get("name")
+            if literal is not None and not is_unresolved(literal):
+                by_name.setdefault(string_value(literal), []).append(info)
+        for typ, name, body in data_sources(data):
+            if typ == "google_iam_policy":
+                policies[name] = body
+    return {"by_ref": by_ref, "by_name": by_name, "policies": policies}
+
+
+def link_gcp_bucket(value, index):
+    """IAM·ACL 의 bucket 값 → 같은 폴더의 버킷 정보. 참조 우선, 리터럴은 유일할 때만. 못 찾으면 None."""
+    if value is None:
+        return None
+    match = _GCP_BUCKET_REF.match(str(value).strip())
+    if match:
+        return index["by_ref"].get(match.group(1))
+    if is_unresolved(value):
+        return None
+    candidates = index["by_name"].get(string_value(value), [])
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def make_gcp_context(datas, module_dir=None):
+    return {"index": build_gcp_index(datas), "module_dir": module_dir}
+
+
+def gcp_policy_bindings(value, ctx):
+    """policy_data → (바인딩 목록 [(role, members, has_condition)], 문제) . 문제: None / 'unresolved' / 'unsupported'."""
+    if value is None:
+        return [], "unresolved"
+    text = str(value).strip()
+    match = _GCP_POLICY_DATA_REF.match(text)
+    if match:
+        body = ctx["index"]["policies"].get(match.group(1))
+        if body is None:
+            return [], "unsupported"                   # 다른 폴더(모듈)의 data 소스이거나 없음
+        if "dynamic" in body:
+            return [], "unresolved"
+        out = []
+        for binding in blocks(body.get("binding")):
+            out.append((binding.get("role"), binding.get("members"), bool(blocks(binding.get("condition")))))
+        return out, None
+    decoded = None
+    jsonenc = _JSONENCODE.match(text)
+    file_call = _FILE_CALL.match(text)
+    if jsonenc and "${" not in jsonenc.group(1):
+        decoded = jsonenc.group(1)
+    elif file_call:
+        path = (ctx["module_dir"] / file_call.group(1)) if ctx.get("module_dir") else None
+        if path is None or not path.is_file():
+            return [], "unsupported"
+        decoded = path.read_text(encoding="utf-8", errors="replace")
+    elif "${" not in text:
+        decoded = text                                  # 리터럴 JSON (heredoc)
+    if decoded is None:
+        return [], "unresolved"
+    try:
+        policy = json.loads(decoded)
+    except ValueError:
+        return [], "unresolved"
+    bindings = policy.get("bindings") if isinstance(policy, dict) else None
+    if not isinstance(bindings, list):
+        return [], ("unresolved" if bindings is not None else None)
+    out = []
+    for binding in bindings:
+        if not isinstance(binding, dict):
+            return [], "unresolved"
+        out.append((binding.get("role"), binding.get("members"), bool(binding.get("condition"))))
+    return out, None
+
+
+def gcp_exposure(principals, level_known, bucket, acl=False):
+    """공개 부여의 exposure. 우선순위: (ACL) UBLA true → PAP enforced → 역할 불명 → 주체 종류."""
+    if acl and bucket is not None and bucket["ubla"] is True:
+        return "acl_disabled_by_uniform_access"
+    if bucket is not None and bucket["pap"] == "enforced":
+        return "blocked_by_public_access_prevention"
+    if not level_known:
+        return "undetermined"
+    if "allUsers" in principals:
+        return "public_access_possible"
+    return "authenticated_users_access_possible"
+
+
 # ---------------------------------------------------------------------------
 # 검사 규칙
 # ---------------------------------------------------------------------------
 
-def scan_configuration(data, s3_links=None, azure_ctx=None):
+def scan_configuration(data, s3_links=None, azure_ctx=None, gcp_ctx=None):
     """Return rule violations (BLOCK) and undecidable items (REVIEW) for a parsed HCL document.
 
     azure_ctx: 같은 폴더(모듈)의 Azure Storage 색인과 azurerm 버전 판단 (make_azure_context).
+    gcp_ctx  : 같은 폴더(모듈)의 GCP 버킷 색인과 google_iam_policy 데이터 소스 (make_gcp_context, v3 PR 6).
                없으면 이 파일 하나만으로 만든다 (scan_file·자가 점검 경로).
     """
     if s3_links is None:
         s3_links = collect_s3_links([data])
     if azure_ctx is None:
         azure_ctx = make_azure_context([data])
+    if gcp_ctx is None:
+        gcp_ctx = make_gcp_context([data])
     findings = []
 
     def add(rule, resource, reason, exposure=None):
@@ -1221,7 +1459,7 @@ def scan_configuration(data, s3_links=None, azure_ctx=None):
         finding = {"rule": rule, "resource": resource, "reason": reason,
                    "cloud": meta["cloud"], "policy": meta["policy"],
                    "verdict": meta["verdict"]}
-        if exposure is not None:                       # Azure Storage 규칙에만 붙는다
+        if exposure is not None:                       # Azure·GCP Storage 규칙에만 붙는다
             finding["exposure"] = exposure
         findings.append(finding)
 
@@ -1258,6 +1496,131 @@ def scan_configuration(data, s3_links=None, azure_ctx=None):
             add("AZURE_OLD_TLS", ref, old_reason)
             return "old"
         return None
+
+    def report_gcp_grants(rule, ref, grants, unknown, unsupported, bucket, where, acl):
+        """grants: [(principal, role_text, level 또는 None, has_condition)] — 확정된 공개 부여.
+        unknown: 확인 불가 값 목록, unsupported: 처음 보는 형식·분석 불가 목록."""
+        if grants:
+            principals = {g[0] for g in grants}
+            level_known = all(g[2] is not None for g in grants)
+            parts = []
+            for principal, role_text, level, cond in grants:
+                part = f"{principal} 에게 {role_text}"
+                part += f" (공개 {level})" if level else " (권한 내용 불명: 사용자 정의·Storage 외·변수 역할)"
+                if cond:
+                    part += " [IAM 조건 있음 — Google은 공개 주체에 조건을 허용하지 않음]"
+                parts.append(part)
+            exposure = gcp_exposure(principals, level_known, bucket, acl)
+            notes = {
+                "blocked_by_public_access_prevention":
+                    " — 연결된 버킷이 PAP enforced 라 실제로는 무력화되며, Google은 공개 주체 추가를 거부(412)해 배포가 실패할 수 있음",
+                "acl_disabled_by_uniform_access":
+                    " — 연결된 버킷이 균일 버킷 수준 접근(UBLA)이라 ACL 요청은 400으로 실패하고 효력이 없음",
+            }
+            kind = "ACL" if acl else "IAM"
+            add(rule, ref, f"공개 주체에게 권한을 부여하는 {kind} 선언{where}: " + "; ".join(parts)
+                + notes.get(exposure, "") + EXPOSURE_NOTE, exposure)
+        elif unknown:
+            add("GCP_STORAGE_PUBLIC_UNRESOLVED", ref,
+                f"공개 주체 여부를 확인할 수 없음{where}: " + ", ".join(unknown) + " (검토 필요)", "undetermined")
+        elif unsupported:
+            add("GCP_STORAGE_UNSUPPORTED", ref,
+                f"분석하지 못한 구성{where}: " + ", ".join(unsupported) + " (검토 필요)", "undetermined")
+
+    def check_gcp_storage(typ, ref, body):
+        idx = gcp_ctx["index"]
+        if typ == GCP_BUCKET:
+            info = gcp_bucket_info(body)
+            site = (" 정적 웹사이트 설정(website)이 있으나 그 자체는 권한을 주지 않음 — 공개 부여는 IAM·ACL 에서 따로 검사."
+                    if info["website"] else "")
+            if info["pap"] == "inherited":
+                given = "생략(기본값 inherited)" if info["pap_raw"] is None else "inherited"
+                add("GCP_STORAGE_PAP_NOT_ENFORCED", ref,
+                    f"공개 접근 방지(public_access_prevention)가 enforced 가 아님: {given}. "
+                    "조직 정책(storage.publicAccessPrevention)에 따라 결정되어 Terraform 밖의 공개 부여를 "
+                    "막는지 확인할 수 없음 (검토 필요)." + site, "undetermined")
+            elif info["pap"] is None:
+                add("GCP_STORAGE_PUBLIC_UNRESOLVED", ref,
+                    "public_access_prevention 값을 확인할 수 없음(변수·표현식·알 수 없는 값) (검토 필요)." + site,
+                    "undetermined")
+            return
+
+        bucket = link_gcp_bucket(body.get("bucket"), idx)
+        where = ""
+        folder = body.get("managed_folder")
+        if folder is not None:
+            where = f" (managed folder {string_value(folder)})"
+
+        if typ in GCP_IAM_TYPES:
+            if typ.endswith("_iam_policy"):
+                bindings, problem = gcp_policy_bindings(body.get("policy_data"), gcp_ctx)
+            elif typ.endswith("_iam_member"):
+                bindings, problem = [(body.get("role"), [body.get("member")], bool(blocks(body.get("condition"))))], None
+            else:
+                bindings, problem = [(body.get("role"), body.get("members"), bool(blocks(body.get("condition"))))], None
+            grants, unknown, unsupported = [], [], []
+            if problem == "unresolved":
+                unknown.append("policy_data(변수·표현식·해석 불가)")
+            elif problem == "unsupported":
+                unsupported.append("policy_data 가 같은 폴더(모듈)에 없는 data 소스·파일을 가리킴")
+            for role, members, cond in bindings:
+                role_text = string_value(role) if role is not None and not is_unresolved(role) else "변수·표현식 역할"
+                if members is None or (not isinstance(members, list) and is_unresolved(members)):
+                    unknown.append("구성원 목록(변수·표현식)")
+                    continue
+                for member in (members if isinstance(members, list) else [members]):
+                    state = gcp_member_state(member)
+                    if state in ("allUsers", "allAuthenticatedUsers"):
+                        grants.append((state, f"역할 {role_text}", gcp_role_level(role), cond))
+                    elif state is None:
+                        unknown.append("구성원(변수·표현식)")
+                    elif state == "unknown":
+                        unsupported.append(f"처음 보는 구성원 형식 {string_value(member)}")
+            report_gcp_grants("GCP_STORAGE_PUBLIC_IAM", ref, grants, unknown, unsupported, bucket, where, False)
+            return
+
+        grants, unknown, unsupported = [], [], []
+        if typ in GCP_ACL_LIST_TYPES:
+            for key in ("predefined_acl", "default_acl"):
+                value = body.get(key)
+                if value is None:
+                    continue
+                if is_unresolved(value):
+                    unknown.append(f"{key}(변수·표현식)")
+                    continue
+                public = GCP_PUBLIC_PREDEFINED.get(string_value(value).strip().lower())
+                if public:
+                    grants.append((public[0], f"{key} = {string_value(value)}", public[1], False))
+            entries = body.get("role_entity")
+            if entries is not None and not isinstance(entries, list):
+                unknown.append("role_entity(변수·표현식)")
+                entries = []
+            for entry in entries or []:
+                if is_unresolved(entry):
+                    unknown.append("role_entity 항목(변수·표현식)")
+                    continue
+                text = string_value(entry)
+                if ":" not in text:
+                    unsupported.append(f"처음 보는 role_entity 형식 {text}")
+                    continue
+                role, entity = text.split(":", 1)
+                state = gcp_acl_entity_state(entity)
+                if state in ("allUsers", "allAuthenticatedUsers"):
+                    grants.append((state, f"ACL {role}", GCP_ACL_ROLE_LEVEL.get(role.strip().lower()), False))
+                elif state == "unknown":
+                    unsupported.append(f"처음 보는 ACL entity {entity}")
+        else:                                           # *_access_control: entity + role
+            state = gcp_acl_entity_state(body.get("entity"))
+            role = body.get("role")
+            level = None if role is None or is_unresolved(role) else GCP_ACL_ROLE_LEVEL.get(string_value(role).lower())
+            role_text = string_value(role) if role is not None and not is_unresolved(role) else "변수·표현식 역할"
+            if state in ("allUsers", "allAuthenticatedUsers"):
+                grants.append((state, f"ACL {role_text}", level, False))
+            elif state is None:
+                unknown.append("entity(변수·표현식)")
+            elif state == "unknown":
+                unsupported.append(f"처음 보는 ACL entity {string_value(body.get('entity'))}")
+        report_gcp_grants("GCP_STORAGE_PUBLIC_ACL", ref, grants, unknown, unsupported, bucket, where, True)
 
     def check_azure_storage(typ, name, ref, body):
         index = azure_ctx["index"]
@@ -1483,6 +1846,10 @@ def scan_configuration(data, s3_links=None, azure_ctx=None):
         # Azure Storage public access (CG-STO-01).
         check_azure_storage(typ, name, ref, body)
 
+        # GCP Cloud Storage public access (CG-STO-01, v3 PR 6).
+        if typ == GCP_BUCKET or typ in GCP_IAM_TYPES or typ in GCP_ACL_LIST_TYPES or typ in GCP_ACL_ENTITY_TYPES:
+            check_gcp_storage(typ, ref, body)
+
         # Azure DB server passwords written as literal Terraform strings.
         if typ.startswith("azurerm_"):
             for password_key in ("administrator_login_password", "administrator_password"):
@@ -1554,6 +1921,45 @@ def build_checks(data, findings):
     return checks
 
 
+def policy_support_resources(policy, cloud):
+    """지원 범위 표의 '검사 대상 자원 종류' (build_checks 가 실제로 기록하는 자원과 같은 출처)."""
+    if (policy, cloud) == ("CG-STO-01", "azure"):
+        return sorted({STORAGE_ACCOUNT, STORAGE_CONTAINER, STORAGE_STATIC_WEBSITE}
+                      | AZAPI_TYPES | TEMPLATE_DEPLOYMENT_TYPES)
+    resources = set(POLICY_TARGETS.get((policy, cloud), set()))
+    if (policy, cloud) == ("CG-NET-01", "gcp"):
+        resources |= set(GCP_FIREWALL_POLICY_RULE_TYPES)
+    return sorted(resources)
+
+
+def policy_matrix(results):
+    """검사 결과(파일 목록) → 정책×클라우드 칸 목록. 각 칸: 지원 여부, 검사한 자원 수, 상태별 개수, 결과.
+
+    결과: PASS(검사한 대상에서 위반 없음) / BLOCK / REVIEW / N/A(지원하지만 대상 자원 없음) / 미지원.
+    ERROR 파일이 있으면 그 파일은 읽지 못했으므로 N/A 대신 '확인 불가(ERROR)' 로 표시한다.
+    """
+    has_error = any(r["status"] == "ERROR" for r in results)
+    cells = []
+    for policy in POLICY_NAMES:
+        for cloud in POLICY_CLOUDS:
+            checks = [c for r in results for c in r.get("checks", [])
+                      if c["policy"] == policy and c["cloud"] == cloud]
+            counts = {s: sum(c["status"] == s for c in checks) for s in ("PASS", "REVIEW", "BLOCK")}
+            supported = (policy, cloud) in POLICY_SUPPORT
+            if not supported:
+                result = "미지원"
+            elif not checks:
+                result = "확인 불가(ERROR)" if has_error else "N/A"
+            else:
+                result = worst(c["status"] for c in checks)
+            cells.append({"policy": policy, "cloud": cloud, "supported": supported, "checked": len(checks),
+                          "counts": counts, "result": result,
+                          "rules": sorted(r for r, m in RULES.items() if m["policy"] == policy and m["cloud"] == cloud),
+                          "resources": policy_support_resources(policy, cloud),
+                          "limits": POLICY_SUPPORT.get((policy, cloud), "구현 없음")})
+    return cells
+
+
 def load_tf(path):
     import hcl2  # Installation: py -m pip install -r requirements.txt
     with path.open("r", encoding="utf-8") as f:
@@ -1573,7 +1979,8 @@ def scan_paths(tf_files):
 
     1단계: 모든 파일을 먼저 읽는다 (S3 버킷과 공개 차단 설정, Storage 계정과 컨테이너가
            다른 파일에 있을 수 있음)
-    2단계: 폴더(모듈)별로 Azure Storage 색인과 azurerm 버전 판단을 만든다
+    2단계: 폴더(모듈)별로 S3 연결(v3 PR 6부터), Azure Storage 색인과 azurerm 버전 판단,
+           GCP 버킷 색인(v3 PR 6)을 만든다
     3단계: 파일별로 검사한다
     """
     parsed, errors = {}, {}
@@ -1582,20 +1989,23 @@ def scan_paths(tf_files):
             parsed[path] = load_tf(path)
         except Exception as exc:
             errors[path] = f"{type(exc).__name__}: {exc}"  # Fail closed: never a PASS.
-    s3_links = collect_s3_links(parsed.values())
-
     by_dir = {}
     for path, data in parsed.items():
         by_dir.setdefault(path.parent, []).append(data)
+    # v3 PR 6: S3 버킷 ↔ 공개 차단 설정 연결도 Terraform 모듈(폴더) 경계 안에서만 한다.
+    # (PR 5까지는 검사한 모든 폴더를 하나로 묶어, 다른 루트 모듈의 같은 이름 버킷을 잘못 연결할 수 있었다)
+    s3_links = {d: collect_s3_links(datas) for d, datas in by_dir.items()}
     versions = resolve_version_contexts(by_dir) if by_dir else {}
     azure_ctx = {d: make_azure_context(datas, versions[d], d) for d, datas in by_dir.items()}
+    gcp_ctx = {d: make_gcp_context(datas, d) for d, datas in by_dir.items()}
 
     results = []
     for path in tf_files:
         if path in errors:
             findings, checks, status, error = [], [], "ERROR", errors[path]
         else:
-            findings = scan_configuration(parsed[path], s3_links, azure_ctx[path.parent])
+            findings = scan_configuration(parsed[path], s3_links[path.parent], azure_ctx[path.parent],
+                                          gcp_ctx[path.parent])
             checks = build_checks(parsed[path], findings)
             status, error = file_status(findings), None
         results.append({"file": str(path), "status": status,

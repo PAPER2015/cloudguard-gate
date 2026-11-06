@@ -1,0 +1,48 @@
+[
+ {
+  "file": "infra/a.tf",
+  "status": "BLOCK",
+  "findings": [
+   {
+    "rule": "AWS_PUBLIC_ADMIN_PORT",
+    "resource": "aws_security_group.a",
+    "reason": "a | b\nc",
+    "cloud": "aws",
+    "policy": "CG-NET-01",
+    "verdict": "BLOCK"
+   },
+   {
+    "rule": "GCP_STORAGE_PAP_NOT_ENFORCED",
+    "resource": "google_storage_bucket.b",
+    "reason": "r",
+    "cloud": "gcp",
+    "policy": "CG-STO-01",
+    "verdict": "REVIEW",
+    "exposure": "undetermined"
+   }
+  ],
+  "checks": [
+   {
+    "resource": "aws_security_group.a",
+    "cloud": "aws",
+    "policy": "CG-NET-01",
+    "status": "BLOCK"
+   }
+  ],
+  "error": null
+ },
+ {
+  "file": "infra/b.tf",
+  "status": "PASS",
+  "findings": [],
+  "checks": [],
+  "error": null
+ },
+ {
+  "file": "infra/c.tf",
+  "status": "ERROR",
+  "findings": [],
+  "checks": [],
+  "error": "UnexpectedToken: x\ny"
+ }
+]
