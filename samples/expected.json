@@ -45,6 +45,18 @@
       "GCP_FIREWALL_POLICY_UNRESOLVED"
     ]
   },
+  "review/38_azure_storage_version_unknown.tf": {
+    "status": "REVIEW",
+    "rules": [
+      "AZURE_STORAGE_PUBLIC_UNRESOLVED"
+    ]
+  },
+  "review/39_azure_static_website.tf": {
+    "status": "REVIEW",
+    "rules": [
+      "AZURE_STORAGE_STATIC_WEBSITE"
+    ]
+  },
   "risky/07_aws_sg_ssh_open.tf": {
     "status": "BLOCK",
     "rules": [
@@ -97,6 +109,13 @@
       "GCP_PUBLIC_ADMIN_PORT"
     ]
   },
+  "risky/19_azure_storage_public.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "AZURE_STORAGE_CONTAINER_PUBLIC",
+      "AZURE_STORAGE_PUBLIC_ALLOWED"
+    ]
+  },
   "risky/30_aws_s3_allow_list_wildcard.tf": {
     "status": "BLOCK",
     "rules": [
@@ -113,6 +132,18 @@
     "status": "BLOCK",
     "rules": [
       "GCP_FIREWALL_POLICY_PUBLIC_ADMIN_PORT"
+    ]
+  },
+  "risky/36_azure_storage_v4_default.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "AZURE_STORAGE_PUBLIC_ALLOWED"
+    ]
+  },
+  "risky/40_azure_container_external_account.tf": {
+    "status": "BLOCK",
+    "rules": [
+      "AZURE_STORAGE_CONTAINER_PUBLIC"
     ]
   },
   "safe/01_aws_s3_private.tf": {
@@ -151,11 +182,19 @@
     "status": "PASS",
     "rules": []
   },
+  "safe/18_azure_storage_private.tf": {
+    "status": "PASS",
+    "rules": []
+  },
   "safe/26_aws_s3_deny_insecure.tf": {
     "status": "PASS",
     "rules": []
   },
   "safe/32_gcp_policy_deny_admin.tf": {
+    "status": "PASS",
+    "rules": []
+  },
+  "safe/37_azure_storage_v5_default.tf": {
     "status": "PASS",
     "rules": []
   }
