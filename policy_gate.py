@@ -26,6 +26,10 @@ v3 PR 5 최종(GPT 추가 교차 검토 반영):
   - 연결 템플릿(templateLink)은 내용을 볼 수 없으므로 REVIEW
   - TLS: azapi minimumTlsVersion 도 검사, TLS 값이 변수·표현식이면 AZURE_TLS_UNRESOLVED(REVIEW)
   - 버전 제약 계산을 표본 대신 정확한 구간 계산으로 교체 (큰 버전 숫자, 사전 공개 버전)
+v3.1 (탐지 누락 수정, 기존 판정·종료 코드·결과 구조는 그대로):
+  - CG-NET-01: aws_security_group_rule(type=ingress) 검사 추가 — 다른 표현 방식과 같은 판정
+  - CG-NET-01: aws_security_group 의 ingress 전체가 변수·for 식이거나 dynamic "ingress" 이면 REVIEW
+  - 폴더 안의 Terraform JSON 구성 파일(.tf.json)을 찾아 ERROR — .tf 와 섞여 있어도 무시하지 않음
 """
 
 import argparse
@@ -86,7 +90,9 @@ RULES = {
 #  Azure 저장소는 자원 종류만으로 대상을 정할 수 없는 azapi·템플릿 배포가 있어
 #  build_checks 에서 is_azure_storage_check_target() 로 따로 판단한다.)
 POLICY_TARGETS = {
-    ("CG-NET-01", "aws"): {"aws_security_group", "aws_vpc_security_group_ingress_rule"},
+    # v3.1: aws_security_group_rule(예전 방식 별도 규칙)를 추가 — 이전에는 검사하지 않아 조용한 PASS 였다.
+    ("CG-NET-01", "aws"): {"aws_security_group", "aws_vpc_security_group_ingress_rule",
+                           "aws_security_group_rule"},
     ("CG-NET-01", "azure"): {"azurerm_network_security_rule", "azurerm_network_security_group"},
     ("CG-NET-01", "gcp"): {
         "google_compute_firewall",
@@ -111,7 +117,7 @@ POLICY_TARGETS = {
 # 자원 목록은 policy_support_resources() 가 POLICY_TARGETS·Azure 판단과 같은 출처에서 계산한다
 # (표와 실제 검사 대상이 어긋나지 않게 — tests/test_summary_matrix.py 가 확인).
 POLICY_SUPPORT = {
-    ("CG-NET-01", "aws"): "보안 그룹 인라인·별도 규칙만. 접두사 목록·NACL·WAF 는 보지 않음",
+    ("CG-NET-01", "aws"): "보안 그룹 인바운드 규칙(인라인·ingress_rule·security_group_rule). dynamic·목록 변수는 REVIEW, 나가는 규칙은 범위 밖. 접두사 목록·NACL·WAF 는 보지 않음",
     ("CG-NET-01", "azure"): "NSG 규칙만. Azure Firewall·서비스 태그 세부 범위는 보지 않음",
     ("CG-NET-01", "gcp"): "VPC 방화벽·방화벽 정책 규칙 3종. *_with_rules 등 다른 규칙 형식·주소 그룹은 REVIEW",
     ("CG-STO-01", "aws"): "버킷·공개 차단·버킷 정책. 계정 수준 공개 차단·ACL 자원은 보지 않음",
@@ -1731,14 +1737,18 @@ def scan_configuration(data, s3_links=None, azure_ctx=None, gcp_ctx=None):
                     "linked": "ARM 템플릿이 연결 템플릿(templateLink)을 불러와 내용을 확인할 수 없음 (검토 필요)",
                 }.get(state, "ARM 템플릿 내용을 확인할 수 없음 (검토 필요)"), "undetermined")
 
-    def check_admin_port(ref, body, *cidr_values):
+    def check_admin_port(ref, body, *cidr_values, inbound=True):
+        # inbound: True = 들어오는 규칙 / False = 나가는 규칙(CG-NET-01 범위 밖) / None = 방향 불명 (v3.1)
         public = any_public(*cidr_values)
         admin = covers_admin_ports(body)
-        if public is False or admin is False:
-            return  # 공개가 아니거나 관리자 포트가 아니면 문제 없음
-        if public and admin:
+        if inbound is False or public is False or admin is False:
+            return  # 나가는 규칙이거나, 공개가 아니거나, 관리자 포트가 아니면 문제 없음
+        if public and admin and inbound:
             add("AWS_PUBLIC_ADMIN_PORT", ref,
                 "인터넷 전체에 SSH(22), RDP(3389) 또는 전체 포트 범위 노출")
+        elif inbound is None:
+            add("AWS_ADMIN_PORT_UNRESOLVED", ref,
+                "규칙 방향(type)이 ingress/egress 로 확인되지 않아 관리자 포트 공개 여부를 확인할 수 없음 (검토 필요)")
         else:
             add("AWS_ADMIN_PORT_UNRESOLVED", ref,
                 "출발지·포트·프로토콜 중 변수·표현식 값이 있어 관리자 포트 공개 여부를 확인할 수 없음 (검토 필요)")
@@ -1784,11 +1794,27 @@ def scan_configuration(data, s3_links=None, azure_ctx=None, gcp_ctx=None):
 
         # AWS security group allows public SSH/RDP or all ports.
         if typ == "aws_security_group":
-            for ingress in blocks(body.get("ingress", [])):
+            inline = body.get("ingress")
+            # v3.1: ingress 목록 전체가 변수·for 식이거나 dynamic "ingress" 이면 내용을 읽을 수 없다.
+            # 예전에는 이 경우 규칙이 없는 것처럼 조용히 PASS 했다. (Azure NSG 의 security_rule 처리와 같은 방식)
+            if inline is not None and (not isinstance(inline, (list, dict)) or
+                                       (isinstance(inline, list) and
+                                        any(not isinstance(item, dict) for item in inline))):
+                add("AWS_ADMIN_PORT_UNRESOLVED", ref,
+                    "ingress 전체가 변수·표현식이라 관리자 포트 공개 여부를 확인할 수 없음 (검토 필요)")
+            if any("ingress" in dyn for dyn in blocks(body.get("dynamic", []))):
+                add("AWS_ADMIN_PORT_UNRESOLVED", ref,
+                    "dynamic \"ingress\" 블록은 지원하지 않아 규칙 내용을 확인할 수 없음 (검토 필요)")
+            for ingress in blocks(inline or []):
                 check_admin_port(ref, ingress,
                                  ingress.get("cidr_blocks"), ingress.get("ipv6_cidr_blocks"))
         if typ == "aws_vpc_security_group_ingress_rule":
             check_admin_port(ref, body, body.get("cidr_ipv4"), body.get("cidr_ipv6"))
+        # v3.1: 예전 방식의 별도 규칙. type = "ingress" 이면 위와 같은 판정, "egress" 이면 범위 밖,
+        # 그 외(변수·생략·처음 보는 값)는 방향을 알 수 없으므로 위험해 보이면 REVIEW.
+        if typ == "aws_security_group_rule":
+            check_admin_port(ref, body, body.get("cidr_blocks"), body.get("ipv6_cidr_blocks"),
+                             inbound=text_state(body.get("type"), {"ingress"}, {"egress"}))
 
         # Azure NSG allows public SSH/RDP (CG-NET-01).
         if typ == "azurerm_network_security_rule":
@@ -2013,6 +2039,13 @@ def scan_paths(tf_files):
     return results
 
 
+def tf_json_error(path):
+    """.tf.json 파일 1개 → ERROR 결과 (기존 분석 오류와 같은 결과 구조). v3.1."""
+    return {"file": str(path), "status": "ERROR", "findings": [], "checks": [],
+            "error": "지원하지 않는 Terraform JSON 구성 파일(.tf.json): Terraform 은 이 파일도 배포하지만 "
+                     "검사기는 해석하지 않으므로 검사하지 못한 설정이 배포되지 않도록 차단"}
+
+
 def main():
     parser = argparse.ArgumentParser(description="교육용 Terraform 보안 정책 게이트")
     parser.add_argument("folder", type=Path, help="검사할 .tf 파일 또는 폴더")
@@ -2023,8 +2056,13 @@ def main():
         print(f"[ERROR] 경로가 없습니다: {args.folder}")
         return 2
     tf_files = sorted(args.folder.rglob("*.tf")) if args.folder.is_dir() else [args.folder]
+    # v3.1: Terraform 은 같은 폴더의 .tf.json 도 읽어 배포한다. 검사기는 .tf 만 해석하므로
+    # .tf.json 이 있으면 (.tf 와 섞여 있어도) 검사하지 못한 설정이 배포될 수 있다 → ERROR.
+    tf_json_files = sorted(args.folder.rglob("*.tf.json")) if args.folder.is_dir() else []
     if not tf_files or any(path.suffix != ".tf" for path in tf_files):
         print("[ERROR] 검사할 .tf 파일이 없습니다.")
+        for path in tf_json_files:
+            print(f"   - 지원하지 않는 Terraform JSON 구성 파일(.tf.json): {path}")
         return 2
 
     try:
@@ -2034,6 +2072,9 @@ def main():
         return 2
 
     results = scan_paths(tf_files)
+    if tf_json_files:
+        results = sorted(results + [tf_json_error(path) for path in tf_json_files],
+                         key=lambda r: Path(r["file"]))
     for result in results:
         status, path, findings, error = result["status"], result["file"], result["findings"], result["error"]
         print(f"[{status}] {path}")
