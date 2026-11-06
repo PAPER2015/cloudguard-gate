@@ -5,6 +5,7 @@ GitHub Actions에서는 이 출력이 실행 결과 화면의 "Summary"에 표�
 
 v3 PR 2: REVIEW(검토 필요) 표시 추가. REVIEW도 배포 차단으로 표시합니다.
 v3 PR 3: 표 칸 안의 줄바꿈·| 문자 때문에 Markdown 표가 깨지던 문제 수정 (내용은 그대로).
+v3 PR 6: 기존 표 뒤에 "정책 × 클라우드 지원 행렬"을 덧붙임 (기존 출력은 한 글자도 바꾸지 않음).
 """
 
 import json
@@ -56,7 +57,43 @@ def main():
         else:
             reason = r.get("error") or "-"
             print(f"| {md_cell(r['file'])} | {ICON[r['status']]} | - | {md_cell(reason)} |")
+    print_matrix(results)
     return 0
+
+
+CLOUD_LABEL = {"aws": "AWS", "azure": "Azure", "gcp": "GCP"}
+RESULT_ICON = {"PASS": "✅ PASS", "REVIEW": "🔍 REVIEW", "BLOCK": "⛔ BLOCK"}
+
+
+def print_matrix(results):
+    """정책 × 클라우드 행렬 (v3 PR 6). PASS·N/A·미지원을 구분해서 보여 준다."""
+    try:
+        from policy_gate import POLICY_NAMES, policy_matrix
+    except Exception as exc:   # 행렬을 못 만들어도 기존 요약은 그대로 남긴다
+        print()
+        print(f"> ⚠️ 정책 행렬을 만들지 못했습니다: {md_cell(exc)}")
+        return
+    print()
+    print("### 정책 × 클라우드 지원 행렬")
+    print()
+    print("| 정책 | 클라우드 | 결과 | 검사한 자원 | 규칙 ID | 검사 대상 자원 종류 | 알려진 한계 |")
+    print("|---|---|---|---|---|---|---|")
+    for cell in policy_matrix(results):
+        result = RESULT_ICON.get(cell["result"], cell["result"])
+        counts = cell["counts"]
+        if cell["checked"]:
+            checked = (f"{cell['checked']}개 (PASS {counts['PASS']} · REVIEW {counts['REVIEW']} "
+                       f"· BLOCK {counts['BLOCK']})")
+        else:
+            checked = "0개"
+        policy = f"{cell['policy']} {POLICY_NAMES[cell['policy']]}"
+        print(f"| {md_cell(policy)} | {CLOUD_LABEL[cell['cloud']]} | {md_cell(result)} | {md_cell(checked)} "
+              f"| {md_cell(', '.join(cell['rules']))} | {md_cell(', '.join(cell['resources']))} "
+              f"| {md_cell(cell['limits'])} |")
+    print()
+    print("> PASS = 지원 범위 안에서 검사한 자원에 정책 위반이 없음 (클라우드 전체가 안전하다는 보증이 아님). "
+          "N/A = 지원하지만 이번 검사에 대상 자원이 없음. 미지원 = 구현이 없음. "
+          "확인 불가(ERROR) = 읽지 못한 파일이 있어 대상 유무를 알 수 없음.")
 
 
 if __name__ == "__main__":

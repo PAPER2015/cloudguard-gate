@@ -1,0 +1,115 @@
+{
+  "_설명": "시나리오별 기대 결과. tools/check_scenario.py 와 tests/test_integration_scenarios.py, GitHub Actions 작업 3이 함께 읽는다. deploy=true 면 모의 배포 단계가 실행(success)되어야 하고, false 면 건너뛰어져야(skipped) 한다. cells 는 (클라우드/정책)별 checks 최악 상태, N/A 는 검사 기록 없음.",
+  "A_all_pass": {
+    "status": "PASS",
+    "exit": 0,
+    "deploy": true,
+    "rules": [],
+    "cells": {
+      "aws/CG-NET-01": "PASS",
+      "aws/CG-STO-01": "PASS",
+      "azure/CG-NET-01": "PASS",
+      "azure/CG-STO-01": "PASS",
+      "gcp/CG-NET-01": "PASS",
+      "gcp/CG-STO-01": "PASS"
+    }
+  },
+  "B_aws_risk": {
+    "status": "BLOCK",
+    "exit": 1,
+    "deploy": false,
+    "rules": [
+      "AWS_PUBLIC_ADMIN_PORT"
+    ],
+    "cells": {
+      "aws/CG-NET-01": "BLOCK",
+      "aws/CG-STO-01": "PASS",
+      "azure/CG-NET-01": "PASS",
+      "azure/CG-STO-01": "PASS",
+      "gcp/CG-NET-01": "PASS",
+      "gcp/CG-STO-01": "PASS"
+    }
+  },
+  "C_azure_risk": {
+    "status": "BLOCK",
+    "exit": 1,
+    "deploy": false,
+    "rules": [
+      "AZURE_STORAGE_PUBLIC_ALLOWED"
+    ],
+    "cells": {
+      "aws/CG-NET-01": "PASS",
+      "aws/CG-STO-01": "PASS",
+      "azure/CG-NET-01": "PASS",
+      "azure/CG-STO-01": "BLOCK",
+      "gcp/CG-NET-01": "PASS",
+      "gcp/CG-STO-01": "PASS"
+    }
+  },
+  "D_gcp_risk": {
+    "status": "BLOCK",
+    "exit": 1,
+    "deploy": false,
+    "rules": [
+      "GCP_STORAGE_PUBLIC_IAM"
+    ],
+    "cells": {
+      "aws/CG-NET-01": "PASS",
+      "aws/CG-STO-01": "PASS",
+      "azure/CG-NET-01": "PASS",
+      "azure/CG-STO-01": "PASS",
+      "gcp/CG-NET-01": "PASS",
+      "gcp/CG-STO-01": "BLOCK"
+    }
+  },
+  "E_all_risk": {
+    "status": "BLOCK",
+    "exit": 1,
+    "deploy": false,
+    "rules": [
+      "AWS_PUBLIC_ADMIN_PORT",
+      "AZURE_STORAGE_PUBLIC_ALLOWED",
+      "GCP_STORAGE_PUBLIC_IAM"
+    ],
+    "cells": {
+      "aws/CG-NET-01": "BLOCK",
+      "aws/CG-STO-01": "PASS",
+      "azure/CG-NET-01": "PASS",
+      "azure/CG-STO-01": "BLOCK",
+      "gcp/CG-NET-01": "PASS",
+      "gcp/CG-STO-01": "BLOCK"
+    }
+  },
+  "F_review": {
+    "status": "REVIEW",
+    "exit": 1,
+    "deploy": false,
+    "rules": [
+      "AWS_ADMIN_PORT_UNRESOLVED",
+      "AZURE_ADMIN_PORT_UNRESOLVED",
+      "GCP_STORAGE_PUBLIC_UNRESOLVED"
+    ],
+    "cells": {
+      "aws/CG-NET-01": "REVIEW",
+      "aws/CG-STO-01": "PASS",
+      "azure/CG-NET-01": "REVIEW",
+      "azure/CG-STO-01": "PASS",
+      "gcp/CG-NET-01": "PASS",
+      "gcp/CG-STO-01": "REVIEW"
+    }
+  },
+  "G_syntax_error": {
+    "status": "ERROR",
+    "exit": 2,
+    "deploy": false,
+    "rules": [],
+    "cells": {
+      "aws/CG-NET-01": "PASS",
+      "aws/CG-STO-01": "PASS",
+      "azure/CG-NET-01": "PASS",
+      "azure/CG-STO-01": "PASS",
+      "gcp/CG-NET-01": "N/A",
+      "gcp/CG-STO-01": "N/A"
+    }
+  }
+}
