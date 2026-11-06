@@ -16,6 +16,16 @@ v3 PR 3: 공통 정책 CG-NET-01(관리자 포트 인터넷 공개 금지)을 Az
   - azurerm_network_security_rule, azurerm_network_security_group 내부 security_rule
 v3 PR 4: CG-NET-01을 GCP 방화벽(google_compute_firewall)에도 적용했다. → AWS·Azure·GCP 세 클라우드 공통
 v3 PR 4 보완: 3종 GCP 방화벽 정책 규칙의 단순 설정 검사 및 복잡한 설정 REVIEW 처리.
+v3 PR 5: 공통 정책 CG-STO-01(저장소 공개 금지)을 Azure Storage로 확장했다.
+  - 판정은 정책 위반 기준, 실제 노출 가능성은 exposure 항목으로 따로 기록 (정적 구성 기준)
+  - azurerm 버전별 기본값: 잠금 파일 > required_providers 제약 (Terraform 평가 방식과 동일)
+  - 폴더 검사 부분을 scan_paths()로 분리 (동작 동일)
+  - AZURE_OLD_TLS: 저장소의 min_tls_version = "TLS1_0"/"TLS1_1" 도 탐지 (조용한 PASS 수정)
+v3 PR 5 최종(GPT 추가 교차 검토 반영):
+  - azapi blobServices 의 properties.staticWebsite.enabled 도 정적 웹사이트로 검토
+  - 연결 템플릿(templateLink)은 내용을 볼 수 없으므로 REVIEW
+  - TLS: azapi minimumTlsVersion 도 검사, TLS 값이 변수·표현식이면 AZURE_TLS_UNRESOLVED(REVIEW)
+  - 버전 제약 계산을 표본 대신 정확한 구간 계산으로 교체 (큰 버전 숫자, 사전 공개 버전)
 """
 
 import argparse
@@ -51,6 +61,12 @@ RULES = {
     "AZURE_HARDCODED_PASSWORD":  {"cloud": "azure", "policy": None,        "verdict": "BLOCK"},
     "AZURE_WIDE_FIREWALL":       {"cloud": "azure", "policy": None,        "verdict": "BLOCK"},
     "AZURE_OLD_TLS":             {"cloud": "azure", "policy": None,        "verdict": "BLOCK"},
+    "AZURE_TLS_UNRESOLVED":      {"cloud": "azure", "policy": None,        "verdict": "REVIEW"},
+    "AZURE_STORAGE_PUBLIC_ALLOWED":    {"cloud": "azure", "policy": "CG-STO-01", "verdict": "BLOCK"},
+    "AZURE_STORAGE_CONTAINER_PUBLIC":  {"cloud": "azure", "policy": "CG-STO-01", "verdict": "BLOCK"},
+    "AZURE_STORAGE_PUBLIC_UNRESOLVED": {"cloud": "azure", "policy": "CG-STO-01", "verdict": "REVIEW"},
+    "AZURE_STORAGE_STATIC_WEBSITE":    {"cloud": "azure", "policy": "CG-STO-01", "verdict": "REVIEW"},
+    "AZURE_STORAGE_UNSUPPORTED":       {"cloud": "azure", "policy": "CG-STO-01", "verdict": "REVIEW"},
     "GCP_PUBLIC_ADMIN_PORT":     {"cloud": "gcp",   "policy": "CG-NET-01", "verdict": "BLOCK"},
     "GCP_ADMIN_PORT_UNRESOLVED": {"cloud": "gcp",   "policy": "CG-NET-01", "verdict": "REVIEW"},
     "GCP_FIREWALL_POLICY_PUBLIC_ADMIN_PORT": {"cloud": "gcp", "policy": "CG-NET-01", "verdict": "BLOCK"},
@@ -61,7 +77,9 @@ RULES = {
 
 # 공통 정책별로 "현재 검사기가 실제로 검사하는" 자원 종류.
 # 여기 있는 자원은 위반이 없어도 checks 목록에 PASS로 기록된다.
-# (Azure·GCP 저장소는 PR 5~6에서 규칙과 함께 추가한다.)
+# (GCP 저장소는 PR 6에서 규칙과 함께 추가한다.
+#  Azure 저장소는 자원 종류만으로 대상을 정할 수 없는 azapi·템플릿 배포가 있어
+#  build_checks 에서 is_azure_storage_check_target() 로 따로 판단한다.)
 POLICY_TARGETS = {
     ("CG-NET-01", "aws"): {"aws_security_group", "aws_vpc_security_group_ingress_rule"},
     ("CG-NET-01", "azure"): {"azurerm_network_security_rule", "azurerm_network_security_group"},
@@ -92,7 +110,7 @@ def cloud_of(resource_type):
     """자원 종류 이름의 앞부분으로 클라우드를 구분한다."""
     if resource_type.startswith("aws_"):
         return "aws"
-    if resource_type.startswith("azurerm_"):
+    if resource_type.startswith("azurerm_") or resource_type.startswith("azapi_"):
         return "azure"
     if resource_type.startswith("google_"):
         return "gcp"
@@ -620,20 +638,735 @@ def evaluate_gcp_firewall_policy_rule(body):
 
 
 # ---------------------------------------------------------------------------
+# Terraform provider 버전 제약 해석 (v3 PR 5)
+# Terraform이 provider 제약을 평가할 때 쓰는 라이브러리(apparentlymart/go-versions v1.0.2,
+# constraints.ParseRubyStyleMulti + versions.MeetingConstraints)와 같은 결과를 내도록 만들었다.
+# tests/fixtures/terraform_version_constraints.json 에 그 라이브러리로 직접 계산한 정답이 있고,
+# tests/test_terraform_version.py 가 이 함수와 비교한다. (만드는 방법: tools/terraform_version_oracle/)
+# ---------------------------------------------------------------------------
+
+_TF_VERSION = re.compile(r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?$")
+_TF_CONDITION = re.compile(r"^(~>|>=|<=|!=|=|>|<)? ?(.+)$")   # 연산자 뒤 공백은 0개 또는 1개만 (라이브러리 규칙)
+TF_CANDIDATE_MAJORS = range(1, 8)   # 1~7. 알려진 AzureRM 메이저는 1~5, 6 이상은 "미래"
+# 이 라이브러리의 규칙 (go-versions v1.0.2 소스와 실제 실행으로 확인):
+#  - 빠진 자리는 0으로 채운다. "= 4" 는 4.0.0 하나, "<= 4" 는 4.0.0 이하 (4.x 전체가 아님)
+#  - "~> 4", "~> 4.1" 은 다음 메이저 전까지, "~> 4.1.2" 는 다음 부 버전 전까지
+#  - 사전 공개 버전(4.0.0-beta1)은 "= 4.0.0-beta1" 처럼 정확히 지목했을 때만 후보가 된다
+
+
+def _tf_parse_version(text):
+    match = _TF_VERSION.match(text)
+    if not match:
+        return None
+    nums = [int(g) for g in match.groups()[:3] if g is not None]
+    return nums, match.group(4)
+
+
+def parse_version_constraints(text):
+    """'~> 4.0, != 4.52.0' → 조건 목록 [(연산자, 숫자들, 사전공개표시)]. 문법 오류는 None."""
+    conditions = []
+    if not text.strip():
+        return conditions
+    for piece in text.split(","):
+        piece = piece.strip()
+        match = _TF_CONDITION.match(piece)
+        if not piece or not match:
+            return None
+        op, version = match.group(1) or "=", match.group(2)
+        parsed = _tf_parse_version(version)
+        if parsed is None:
+            return None
+        conditions.append((op, parsed[0], parsed[1]))
+    return conditions
+
+
+def _tf_conditions(texts):
+    conditions = []
+    for text in texts:
+        parsed = parse_version_constraints(text)
+        if parsed is None:
+            return None
+        conditions.extend(parsed)
+    return conditions
+
+
+def _tf_zero(nums):
+    """빠진 자리를 0으로 채운 (주, 부, 수) 세 숫자."""
+    return tuple(nums + [0] * (3 - len(nums)))
+
+
+def _tf_pre_less(a, b):
+    """사전 공개 표시 비교. 라이브러리 VersionExtra.LessThan 을 그대로 옮겼다 (점 개수 우선 등 특이점 포함)."""
+    if a == b:
+        return False
+    while True:
+        d1, d2 = a.find("."), b.find(".")
+        if d1 == -1 and d2 != -1:
+            return True
+        if d2 == -1 and d1 != -1:
+            return False
+        if d1 == -1:
+            return _tf_ident_less(a, b)
+        if a[:d1] != b[:d2]:
+            return _tf_ident_less(a[:d1], b[:d2])
+        a, b = a[d1 + 1:], b[d2 + 1:]
+
+
+def _tf_ident_less(a, b):
+    a_num, b_num = a.isdigit(), b.isdigit()
+    if a_num != b_num:
+        return a_num                      # 숫자로만 된 쪽이 앞
+    if a_num:
+        return (len(a), a) < (len(b), b)
+    return a < b
+
+
+def _tf_less(v, w):
+    """v < w. 버전은 ((주, 부, 수), 사전공개표시 또는 None)."""
+    if v[0] != w[0]:
+        return v[0] < w[0]
+    if v[1] == w[1]:
+        return False
+    if v[1] is None:
+        return False                      # 정식 버전이 같은 숫자의 사전 공개보다 뒤
+    if w[1] is None:
+        return True
+    return _tf_pre_less(v[1], w[1])
+
+
+def _tf_upper(op, nums):
+    """'~>' 의 상한 (이 값 미만). 숫자를 3개 적으면 다음 부 버전, 아니면 다음 메이저."""
+    if len(nums) == 3:
+        return (nums[0], nums[1] + 1, 0)
+    return (nums[0] + 1, 0, 0)
+
+
+def _tf_exact_has(version, condition):
+    """라이브러리 MeetingConstraintsExact 와 같은 조건 판정 (사전 공개 버전 포함)."""
+    op, nums, pre = condition
+    bound = (_tf_zero(nums), pre)
+    same = version == bound
+    if op == "=":
+        return same
+    if op == "!=":
+        return not same
+    if op == ">":
+        return _tf_less(bound, version)
+    if op == ">=":
+        return same or _tf_less(bound, version)
+    if op == "<":
+        return _tf_less(version, bound)
+    if op == "<=":
+        return same or _tf_less(version, bound)
+    if op == "~>":
+        return (same or _tf_less(bound, version)) and _tf_less(version, (_tf_upper(op, nums), None))
+    return False
+
+
+def _tf_has(version, conditions):
+    """라이브러리 MeetingConstraints.Has: 정식 버전은 모든 조건을 만족하면 포함.
+    사전 공개 버전은 '=' 로 정확히 지목되었고 모든 조건을 만족할 때만 포함."""
+    if not all(_tf_exact_has(version, c) for c in conditions):
+        return False
+    if version[1] is None:
+        return True
+    return any(op == "=" and (_tf_zero(nums), pre) == version for op, nums, pre in conditions)
+
+
+def _tf_release_range(condition):
+    """정식 버전만 볼 때 조건 하나가 허용하는 구간 [하한, 상한)과 빼야 할 점.
+    세 숫자는 사전식 순서이고, (a, b, c) 바로 다음 정식 버전은 (a, b, c + 1) 이다."""
+    op, nums, pre = condition
+    z = _tf_zero(nums)
+    nxt = (z[0], z[1], z[2] + 1)
+    if op == "=":
+        return (None, None, None) if pre else (z, nxt, None)     # 사전 공개 지정이면 정식 버전 없음
+    if op == "!=":
+        return (None, "inf", None if pre else z)
+    if op == ">":
+        return (z if pre else nxt, "inf", None)                 # 4.0.0 > 4.0.0-beta 이므로 pre면 z부터
+    if op == ">=":
+        return (z, "inf", None)
+    if op == "<":
+        return (None, z, None)
+    if op == "<=":
+        return (None, z if pre else nxt, None)                  # 4.0.0 은 4.0.0-beta 보다 크므로 제외
+    if op == "~>":
+        return (z, _tf_upper(op, nums), None)
+    return (None, None, None)
+
+
+def _tf_release_exists(low, high, excluded):
+    """[low, high) 안에 excluded 에 없는 정식 버전이 하나라도 있는가 (high 는 미포함)."""
+    if not low < high:
+        return False
+    if low[:2] != high[:2]:
+        return True                      # 수 버전이 끝없이 이어지므로 유한 개를 빼도 남는다
+    count = high[2] - low[2]             # 같은 (주, 부) 안: 정확히 count 개
+    inside = {p for p in excluded if low <= p < high}
+    return count > len(inside)
+
+
+def possible_major_versions(texts):
+    """제약 문자열들(모두 만족해야 함)을 만족하는 버전이 있는 메이저 집합. 문법 오류면 None.
+    표본을 찍어 보는 대신 구간을 직접 계산하므로 4.121.0, 4.0.121 같은 큰 숫자도 정확하다."""
+    conditions = _tf_conditions(texts)
+    if conditions is None:
+        return None
+    majors = set()
+    for major in TF_CANDIDATE_MAJORS:
+        low, high, excluded, empty = (major, 0, 0), (major + 1, 0, 0), set(), False
+        for condition in conditions:
+            c_low, c_high, c_point = _tf_release_range(condition)
+            if c_high is None:
+                empty = True
+                break
+            if c_low is not None:
+                low = max(low, c_low)
+            if c_high != "inf":
+                high = min(high, c_high)
+            if c_point is not None:
+                excluded.add(c_point)
+        if not empty and _tf_release_exists(low, high, excluded):
+            majors.add(major)
+    for op, nums, pre in conditions:                       # 정확히 지목된 사전 공개 버전
+        if op == "=" and pre and nums[0] in TF_CANDIDATE_MAJORS:
+            if _tf_has((_tf_zero(nums), pre), conditions):
+                majors.add(nums[0])
+    return majors
+
+
+def version_satisfies(version_text, texts):
+    """정확한 버전(잠금 파일)이 제약들을 모두 만족하는가. 해석 불가면 None."""
+    parsed = _tf_parse_version(version_text.strip())
+    conditions = _tf_conditions(texts)
+    if parsed is None or conditions is None:
+        return None
+    nums, pre = parsed
+    return _tf_has((_tf_zero(nums), pre), conditions)
+
+
+# ---------------------------------------------------------------------------
+# Azure Storage 공개 위험 (v3 PR 5, CG-STO-01)
+# 정책: 저장소 데이터를 인증 없이 읽을 수 있게 하거나, 그것을 가능하게 하는 계정 수준 보호
+#       장치를 끄는 설정을 금지한다. (판정 = 정책 위반 / exposure = 정적 구성 기준 노출 상태)
+# exposure 값 (모두 Terraform 정적 구성 기준이며, 실제 클라우드 접근을 확인한 것이 아니다)
+#   anonymous_access_configured : 계정 허용 + 공개 컨테이너가 확인된 참조로 함께 구성됨
+#   public_access_possible      : 공개가 가능한 상태지만 짝이 되는 설정을 확인하지 못함
+#   blocked_by_account_setting  : 컨테이너는 공개 선언, 연결된 계정이 익명 접근을 막음
+#   intentional_static_website  : 정적 웹사이트 ($web 은 계정 설정과 무관하게 공개)
+#   undetermined                : 값을 확인할 수 없음
+# ---------------------------------------------------------------------------
+
+AZURERM_PROVIDER_ADDRESSES = {"hashicorp/azurerm", "registry.terraform.io/hashicorp/azurerm"}
+# 메이저별 "익명 접근 허용" 필드 생략 시 기본값. None = 정적으로 알 수 없음
+#   v1: 필드 없음(Azure 서비스 기본값) / v2: allow_blob_public_access=false
+#   v3·v4: allow_nested_items_to_be_public=true (v4는 ARM_FIVEPOINTZERO_BETA=true 이면 false)
+#   v5: false / v6 이상: 아직 없음
+AZURERM_PUBLIC_DEFAULT = {1: None, 2: False, 3: True, 4: True, 5: False}
+
+STORAGE_ACCOUNT = "azurerm_storage_account"
+STORAGE_CONTAINER = "azurerm_storage_container"
+STORAGE_STATIC_WEBSITE = "azurerm_storage_account_static_website"
+STORAGE_NETWORK_RULES = "azurerm_storage_account_network_rules"
+AZAPI_TYPES = {"azapi_resource", "azapi_update_resource"}
+TEMPLATE_DEPLOYMENT_TYPES = {
+    "azurerm_resource_group_template_deployment", "azurerm_subscription_template_deployment",
+    "azurerm_management_group_template_deployment", "azurerm_tenant_template_deployment",
+}
+ARM_STORAGE_ACCOUNT = "microsoft.storage/storageaccounts"
+ARM_STORAGE_CONTAINER = "microsoft.storage/storageaccounts/blobservices/containers"
+ARM_BLOB_SERVICE = "microsoft.storage/storageaccounts/blobservices"   # staticWebsite 설정이 여기 있다
+ARM_DEPLOYMENT = "microsoft.resources/deployments"
+_ACCOUNT_REF = re.compile(r"^\$\{azurerm_storage_account\.([A-Za-z0-9_-]+)(?:\[[^\]]*\])?\.(?:id|name)\}$")
+_FILE_CALL = re.compile(r'^\$\{file\("(?:\$\{path\.module\}/)?([^"$]+)"\)\}$')
+_JSONENCODE = re.compile(r"^\$\{jsonencode\((.*)\)\}$", re.S)
+_DYNAMIC_REF = re.compile(r"\b(var|local|module|data|each|count|path|terraform)\.|templatefile\(|file\(")
+EXPOSURE_NOTE = " (Terraform 정적 구성 기준이며 실제 클라우드 접근을 확인한 것은 아님)"
+
+
+def bool_state(value):
+    """True / False / None(생략·변수·처음 보는 값)."""
+    if isinstance(value, bool):
+        return value
+    if value is None or is_unresolved(value):
+        return None
+    return {"true": True, "false": False}.get(string_value(value).lower())
+
+
+def azurerm_constraints(data):
+    """required_providers 의 azurerm 버전 제약 목록과, 다른 출처(source)를 쓰는지 여부."""
+    constraints, foreign = [], False
+    for block in blocks(data.get("terraform", [])):
+        for providers in blocks(block.get("required_providers", [])):
+            spec = providers.get("azurerm")
+            if spec is None:
+                continue
+            if isinstance(spec, str):                       # 옛 문법: azurerm = "~> 4.0"
+                constraints.append(string_value(spec))
+                continue
+            if isinstance(spec, dict):
+                source = spec.get("source")
+                if source is not None and string_value(source).lower() not in AZURERM_PROVIDER_ADDRESSES:
+                    foreign = True
+                version = spec.get("version")
+                if version is not None:
+                    if is_unresolved(version):
+                        foreign = True                      # 변수 제약 → 해석 불가로 처리
+                    else:
+                        constraints.append(string_value(version))
+    for block in blocks(data.get("provider", [])):           # 옛 문법: provider "azurerm" { version = ... }
+        spec = block.get("azurerm")
+        if isinstance(spec, dict) and spec.get("version") is not None:
+            constraints.append(string_value(spec["version"]))
+    return constraints, foreign
+
+
+def lock_file_azurerm_version(lock_path):
+    """.terraform.lock.hcl 에 고정된 azurerm 버전 (없거나 읽을 수 없으면 None)."""
+    if not lock_path.is_file():
+        return None
+    try:
+        import hcl2
+        with lock_path.open("r", encoding="utf-8") as f:
+            data = hcl2.load(f)
+    except Exception:
+        return "unreadable"
+    for block in blocks(data.get("provider", [])):
+        for address, body in block.items():
+            if string_value(address).lower() in AZURERM_PROVIDER_ADDRESSES and isinstance(body, dict):
+                version = body.get("version")
+                return string_value(version) if version is not None else "unreadable"
+    return None
+
+
+def public_default_from_majors(majors):
+    """가능한 메이저들의 기본값이 모두 같을 때만 그 값. 아니면 None."""
+    if not majors:
+        return None
+    values = {AZURERM_PUBLIC_DEFAULT.get(m) for m in majors}
+    return values.pop() if len(values) == 1 else None
+
+
+def module_calls(data, module_dir):
+    """로컬 경로(./, ../)로 부르는 하위 모듈 폴더 목록."""
+    called = []
+    for block in blocks(data.get("module", [])):
+        for _name, body in block.items():
+            source = body.get("source") if isinstance(body, dict) else None
+            if source is None or is_unresolved(source):
+                continue
+            source = string_value(source)
+            if source.startswith("./") or source.startswith("../"):
+                called.append((module_dir / source).resolve())
+    return called
+
+
+def resolve_version_contexts(parsed_by_dir, lock_reader=lock_file_azurerm_version):
+    """폴더(모듈)마다 azurerm 버전 판단 결과를 만든다.
+
+    Terraform 규칙: 잠금 파일은 루트 모듈에만 있고, 루트와 그 하위 모듈의 provider 제약은
+    모두 동시에 만족해야 한다. 여기서는 로컬 경로 module 호출로 루트·하위 관계를 찾는다.
+    반환: {폴더: {"default": True/False/None, "note": 판단 근거 문장}}
+    """
+    dirs = {d.resolve(): d for d in parsed_by_dir}
+    info = {}
+    for key, original in dirs.items():
+        cons, foreign = [], False
+        children = []
+        for data in parsed_by_dir[original]:
+            c, f = azurerm_constraints(data)
+            cons.extend(c)
+            foreign = foreign or f
+            children.extend(m for m in module_calls(data, key) if m in dirs and m != key)
+        info[key] = {"constraints": cons, "foreign": foreign, "children": children}
+    called = {child for meta in info.values() for child in meta["children"]}
+    roots = [d for d in info if d not in called]
+
+    def tree(root):
+        seen, stack = [], [root]
+        while stack:
+            d = stack.pop()
+            if d in seen:
+                continue
+            seen.append(d)
+            stack.extend(info[d]["children"])
+        return seen
+
+    results = {}
+    for root in roots:
+        members = tree(root)
+        cons = [c for d in members for c in info[d]["constraints"]]
+        foreign = any(info[d]["foreign"] for d in members)
+        lock = lock_reader(root / ".terraform.lock.hcl")
+        if foreign:
+            outcome = (None, "azurerm 출처나 버전 제약이 표준 형태가 아님")
+        elif lock == "unreadable":
+            outcome = (None, "잠금 파일을 해석할 수 없음")
+        elif lock:
+            ok = version_satisfies(lock, cons)
+            parsed = _tf_parse_version(lock)
+            if ok is not True or parsed is None:
+                outcome = (None, f"잠금 파일 버전 {lock}이 제약과 맞지 않거나 해석 불가")
+            else:
+                outcome = (public_default_from_majors({parsed[0][0]}), f"잠금 파일 azurerm {lock}")
+        elif cons:
+            majors = possible_major_versions(cons)
+            if majors is None:
+                outcome = (None, "버전 제약 문법 오류")
+            else:
+                shown = ", ".join(f"v{m}" for m in sorted(majors)) or "없음"
+                outcome = (public_default_from_majors(majors),
+                           f"버전 제약 {' + '.join(cons)} → 가능한 메이저 {shown}")
+        else:
+            outcome = (None, "azurerm 버전 정보 없음")
+        for d in members:
+            results.setdefault(d, []).append(outcome)
+
+    contexts = {}
+    for key, original in dirs.items():
+        outcomes = results.get(key) or [(None, "루트 모듈을 찾을 수 없음 (순환 호출 등)")]
+        values = {o[0] for o in outcomes}
+        default = values.pop() if len(values) == 1 else None
+        contexts[original] = {"default": default, "note": "; ".join(o[1] for o in outcomes)}
+    return contexts
+
+
+def account_network_state(body, rule_bodies):
+    """'public' / 'restricted' / 'unknown' — 판정에는 쓰지 않고 사유 문구에만 쓴다."""
+    states = []
+    enabled = body.get("public_network_access_enabled")
+    if enabled is not None:
+        states.append({True: "public", False: "restricted"}.get(bool_state(enabled), "unknown"))
+    access = body.get("public_network_access")
+    if access is not None:
+        text = None if is_unresolved(access) else string_value(access).lower()
+        states.append("public" if text == "enabled" else "unknown" if text is None else "restricted")
+    for rules in blocks(body.get("network_rules")) + rule_bodies:
+        action = rules.get("default_action")
+        text = None if action is None or is_unresolved(action) else string_value(action).lower()
+        states.append({"allow": "public", "deny": "restricted"}.get(text, "unknown"))
+    if "restricted" in states:
+        return "restricted"
+    if "unknown" in states:
+        return "unknown"
+    return "public"
+
+
+NETWORK_LABEL = {"public": "공개", "restricted": "제한됨", "unknown": "확인 불가"}
+
+
+def evaluate_storage_account(body, public_default, version_note):
+    """계정 하나 → (판정, 사유, 실효 공개 허용 True/False/None)."""
+    kind = body.get("account_kind")
+    file_only = (kind is not None and not is_unresolved(kind)
+                 and string_value(kind).lower() == "filestorage")
+    values = [body[k] for k in ("allow_nested_items_to_be_public", "allow_blob_public_access") if k in body]
+    states = [bool_state(v) for v in values]
+    if True in states:
+        return "BLOCK", "계정이 컨테이너 익명 공개를 허용함 (명시 설정)", True
+    if file_only:
+        return "PASS", "FileStorage 계정은 Blob 서비스가 없어 익명 Blob 접근이 불가능", False
+    if states and all(s is False for s in states):
+        return "PASS", "", False
+    if states:
+        return "REVIEW", "익명 공개 허용 값이 변수·표현식이라 확인할 수 없음", None
+    if public_default is True:
+        return "BLOCK", f"익명 공개 허용 설정 생략 → 기본값 true ({version_note})", True
+    if public_default is False:
+        return "PASS", "", False
+    return "REVIEW", f"익명 공개 허용 설정 생략, 기본값을 정할 수 없음 ({version_note})", None
+
+
+def container_access_state(value):
+    """'public' / 'private' / None(확인 불가)."""
+    if value is None:
+        return "private"                                     # 기본값 private
+    if is_unresolved(value):
+        return None
+    text = string_value(value).lower()
+    if text in ("blob", "container"):
+        return "public"
+    return "private" if text in ("private", "none") else None
+
+
+def build_storage_index(datas):
+    """같은 폴더(모듈) 안의 Storage 계정 색인: 자원 이름 → 정보, 리터럴 name → 자원 이름들."""
+    accounts, by_name, rule_bodies, container_links = {}, {}, {}, {}
+    for data in datas:
+        for typ, name, body in resources(data):
+            if typ == STORAGE_ACCOUNT:
+                accounts[name] = body
+                literal = body.get("name")
+                if literal is not None and not is_unresolved(literal):
+                    by_name.setdefault(string_value(literal), []).append(name)
+    index = {"accounts": accounts, "by_name": by_name}
+    for data in datas:
+        for typ, name, body in resources(data):
+            target = link_storage_account(body, index)
+            if typ == STORAGE_NETWORK_RULES and target:
+                rule_bodies.setdefault(target, []).append(body)
+            if typ == STORAGE_CONTAINER and target:
+                container_links.setdefault(target, []).append(container_access_state(body.get("container_access_type")))
+    index["network_rules"] = rule_bodies
+    index["container_states"] = container_links
+    return index
+
+
+def link_storage_account(body, index):
+    """컨테이너 등이 가리키는 같은 폴더의 계정 자원 이름. 확실하지 않으면 None."""
+    for key in ("storage_account_id", "storage_account_name"):
+        value = body.get(key)
+        if value is None:
+            continue
+        text = str(value)
+        match = _ACCOUNT_REF.match(text)
+        if match:
+            return match.group(1) if match.group(1) in index["accounts"] else None
+        if is_unresolved(value):
+            return None                                       # 변수·data·module → 연결하지 않음
+        literal = string_value(value)
+        if key == "storage_account_id":
+            literal = literal.rstrip("/").split("/")[-1] if "/storageaccounts/" in literal.lower() else ""
+        candidates = index["by_name"].get(literal, [])
+        return candidates[0] if len(candidates) == 1 else None   # 이름이 유일할 때만
+    return None
+
+
+def azapi_type_base(body):
+    """azapi 자원의 type → '@버전' 앞부분 소문자. 확인 불가면 None."""
+    value = body.get("type")
+    if value is None or is_unresolved(value):
+        return None
+    return string_value(value).split("@")[0].strip().lower()
+
+
+def azapi_body(body):
+    """azapi body → dict. jsonencode(리터럴)이면 풀어서 dict. 해석 불가면 None."""
+    value = body.get("body")
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        match = _JSONENCODE.match(value.strip())
+        if match and "${" not in match.group(1):
+            try:
+                decoded = json.loads(match.group(1))
+                return decoded if isinstance(decoded, dict) else None
+            except ValueError:
+                return None
+    return None
+
+
+def template_text_state(text_value, module_dir):
+    """ARM 템플릿 내용 → 'storage' / 'linked' / 'clear' / 'unknown'.
+    'linked': templateLink(uri·relativePath·id)로 바깥 템플릿을 불러와 내용을 볼 수 없음."""
+    if text_value is None:
+        return "clear"
+    if isinstance(text_value, (dict, list)):
+        text = json.dumps(text_value)
+    else:
+        text = str(text_value)
+        match = _FILE_CALL.match(text.strip())
+        if match:
+            path = (module_dir / match.group(1)) if module_dir else None
+            if path is None or not path.is_file():
+                return "unknown"
+            text = path.read_text(encoding="utf-8", errors="replace")
+    if ARM_STORAGE_ACCOUNT in text.lower():
+        return "storage"
+    if "templatelink" in text.lower():                   # ARM 속성 이름은 대소문자 구분 없음
+        return "linked"
+    if "${" in text and _DYNAMIC_REF.search(text):
+        return "unknown"
+    return "clear"
+
+
+def is_azure_storage_check_target(typ, body):
+    """CG-STO-01(Azure) checks 에 기록할 자원인가."""
+    if typ in (STORAGE_ACCOUNT, STORAGE_CONTAINER, STORAGE_STATIC_WEBSITE) or typ in TEMPLATE_DEPLOYMENT_TYPES:
+        return True
+    if typ in AZAPI_TYPES:
+        base = azapi_type_base(body)
+        return base is None or base in (ARM_STORAGE_ACCOUNT, ARM_STORAGE_CONTAINER, ARM_BLOB_SERVICE,
+                                        ARM_DEPLOYMENT)
+    return False
+
+
+def make_azure_context(datas, version_context=None, module_dir=None):
+    """scan_configuration 에 넘길 Azure Storage 판단 재료 (같은 폴더 기준)."""
+    if version_context is None:
+        version_context = resolve_version_contexts({Path("."): list(datas)}, lock_reader=lambda _p: None)[Path(".")]
+    return {"index": build_storage_index(datas), "default": version_context["default"],
+            "note": version_context["note"], "module_dir": module_dir}
+
+
+# ---------------------------------------------------------------------------
 # 검사 규칙
 # ---------------------------------------------------------------------------
 
-def scan_configuration(data, s3_links=None):
-    """Return rule violations (BLOCK) and undecidable items (REVIEW) for a parsed HCL document."""
+def scan_configuration(data, s3_links=None, azure_ctx=None):
+    """Return rule violations (BLOCK) and undecidable items (REVIEW) for a parsed HCL document.
+
+    azure_ctx: 같은 폴더(모듈)의 Azure Storage 색인과 azurerm 버전 판단 (make_azure_context).
+               없으면 이 파일 하나만으로 만든다 (scan_file·자가 점검 경로).
+    """
     if s3_links is None:
         s3_links = collect_s3_links([data])
+    if azure_ctx is None:
+        azure_ctx = make_azure_context([data])
     findings = []
 
-    def add(rule, resource, reason):
+    def add(rule, resource, reason, exposure=None):
         meta = RULES[rule]
-        findings.append({"rule": rule, "resource": resource, "reason": reason,
-                         "cloud": meta["cloud"], "policy": meta["policy"],
-                         "verdict": meta["verdict"]})
+        finding = {"rule": rule, "resource": resource, "reason": reason,
+                   "cloud": meta["cloud"], "policy": meta["policy"],
+                   "verdict": meta["verdict"]}
+        if exposure is not None:                       # Azure Storage 규칙에만 붙는다
+            finding["exposure"] = exposure
+        findings.append(finding)
+
+    def check_azapi_static_website(ref, parsed, props):
+        """azapi blobServices: properties.staticWebsite.enabled 만 본다 (다른 Blob 서비스 설정은 무관)."""
+        unknown = ("azapi blobServices 의 정적 웹사이트 설정을 확인할 수 없음"
+                   "(body·properties·staticWebsite 가 변수·표현식) (검토 필요)")
+        if parsed is None or (props is not None and not isinstance(props, dict)):
+            add("AZURE_STORAGE_STATIC_WEBSITE", ref, unknown, "undetermined")
+            return
+        site = (props or {}).get("staticWebsite")
+        if site is None:
+            return                                      # 정적 웹사이트를 건드리지 않음
+        if not isinstance(site, dict):
+            add("AZURE_STORAGE_STATIC_WEBSITE", ref, unknown, "undetermined")
+            return
+        state = bool_state(site.get("enabled"))
+        if state is True:
+            add("AZURE_STORAGE_STATIC_WEBSITE", ref,
+                "azapi: staticWebsite.enabled = true — $web 컨테이너는 계정의 익명 접근 설정과 무관하게 공개됨 "
+                "— 의도된 공개인지 확인 필요 (검토 필요)", "intentional_static_website")
+        elif state is None:
+            add("AZURE_STORAGE_STATIC_WEBSITE", ref,
+                "azapi: staticWebsite.enabled 값을 확인할 수 없음(변수·표현식·생략) (검토 필요)", "undetermined")
+
+    def check_tls(ref, value, old_values, old_reason):
+        """명시적인 TLS 1.0/1.1 → AZURE_OLD_TLS(BLOCK), 변수·표현식 → AZURE_TLS_UNRESOLVED(REVIEW).
+        결과: 'old' / 'unknown' / None(생략·안전한 값·처음 보는 값)."""
+        if value is None:
+            return None
+        if is_unresolved(value):
+            return "unknown"
+        if string_value(value).upper() in old_values:
+            add("AZURE_OLD_TLS", ref, old_reason)
+            return "old"
+        return None
+
+    def check_azure_storage(typ, name, ref, body):
+        index = azure_ctx["index"]
+        if typ == STORAGE_ACCOUNT:
+            verdict, why, effective = evaluate_storage_account(body, azure_ctx["default"], azure_ctx["note"])
+            network = NETWORK_LABEL[account_network_state(body, index["network_rules"].get(name, []))]
+            if verdict == "BLOCK":
+                linked = index["container_states"].get(name, [])
+                exposure = ("anonymous_access_configured" if "public" in linked
+                            else "public_access_possible")
+                add("AZURE_STORAGE_PUBLIC_ALLOWED", ref,
+                    f"{why} [네트워크: {network}, 판정과 무관]{EXPOSURE_NOTE}", exposure)
+            elif verdict == "REVIEW":
+                add("AZURE_STORAGE_PUBLIC_UNRESOLVED", ref, why + " (검토 필요)", "undetermined")
+            if blocks(body.get("static_website")):
+                add("AZURE_STORAGE_STATIC_WEBSITE", ref,
+                    "정적 웹사이트 활성화: $web 컨테이너는 계정의 익명 접근 설정과 무관하게 공개됨 "
+                    "— 의도된 공개인지 확인 필요 (검토 필요)", "intentional_static_website")
+            if any("static_website" in dyn for dyn in blocks(body.get("dynamic", []))):
+                add("AZURE_STORAGE_STATIC_WEBSITE", ref,
+                    "dynamic \"static_website\" 블록이라 정적 웹사이트 활성 여부를 확인할 수 없음 (검토 필요)",
+                    "undetermined")
+        elif typ == STORAGE_CONTAINER:
+            state = container_access_state(body.get("container_access_type"))
+            target = link_storage_account(body, index)
+            if state == "public":
+                if target is None:
+                    exposure, where = "public_access_possible", "연결된 계정을 확인할 수 없음"
+                else:
+                    _v, _w, effective = evaluate_storage_account(
+                        index["accounts"][target], azure_ctx["default"], azure_ctx["note"])
+                    exposure = {True: "anonymous_access_configured",
+                                False: "blocked_by_account_setting"}.get(effective, "public_access_possible")
+                    where = f"연결된 계정 azurerm_storage_account.{target}"
+                add("AZURE_STORAGE_CONTAINER_PUBLIC", ref,
+                    f"컨테이너 접근 수준이 blob/container(익명 읽기 선언) — {where}{EXPOSURE_NOTE}", exposure)
+            elif state is None:
+                add("AZURE_STORAGE_PUBLIC_UNRESOLVED", ref,
+                    "컨테이너 접근 수준이 변수·표현식이라 확인할 수 없음 (검토 필요)", "undetermined")
+        elif typ == STORAGE_STATIC_WEBSITE:
+            add("AZURE_STORAGE_STATIC_WEBSITE", ref,
+                "정적 웹사이트 자원: $web 컨테이너는 계정의 익명 접근 설정과 무관하게 공개됨 "
+                "— 의도된 공개인지 확인 필요 (검토 필요)", "intentional_static_website")
+        elif typ in AZAPI_TYPES:
+            base = azapi_type_base(body)
+            if base is None:
+                add("AZURE_STORAGE_PUBLIC_UNRESOLVED", ref,
+                    "azapi 자원의 type을 확인할 수 없어 Storage 공개 설정 여부를 판단할 수 없음 (검토 필요)",
+                    "undetermined")
+                return
+            if base == ARM_DEPLOYMENT:
+                raw = body.get("body")
+                state = template_text_state(raw, azure_ctx["module_dir"])
+                if state != "clear":
+                    add("AZURE_STORAGE_UNSUPPORTED", ref, {
+                        "storage": "ARM 배포(azapi) 안의 Storage 설정은 해석하지 않음",
+                        "linked": "ARM 배포(azapi)가 연결 템플릿(templateLink)을 불러와 내용을 확인할 수 없음",
+                    }.get(state, "ARM 배포(azapi) 내용을 확인할 수 없음"), "undetermined")
+                return
+            if base not in (ARM_STORAGE_ACCOUNT, ARM_STORAGE_CONTAINER, ARM_BLOB_SERVICE):
+                return                                  # Storage 와 무관한 azapi 자원
+            parsed = azapi_body(body)
+            props = parsed.get("properties") if isinstance(parsed, dict) else None
+            if base == ARM_BLOB_SERVICE:
+                check_azapi_static_website(ref, parsed, props)
+                return
+            if parsed is None or (props is not None and not isinstance(props, dict)):
+                add("AZURE_STORAGE_PUBLIC_UNRESOLVED", ref,
+                    "azapi body가 jsonencode·변수 등이라 공개 설정을 확인할 수 없음 (검토 필요)", "undetermined")
+                return
+            props = props or {}
+            if base == ARM_STORAGE_ACCOUNT:
+                if "allowBlobPublicAccess" not in props:
+                    if typ == "azapi_resource":
+                        add("AZURE_STORAGE_PUBLIC_UNRESOLVED", ref,
+                            "azapi 계정에 allowBlobPublicAccess가 없어 Azure 서비스 기본값을 단정할 수 없음 (검토 필요)",
+                            "undetermined")
+                    return                              # update_resource 는 적은 속성만 바꿈
+                state = bool_state(props["allowBlobPublicAccess"])
+                if state is True:
+                    add("AZURE_STORAGE_PUBLIC_ALLOWED", ref,
+                        f"azapi: allowBlobPublicAccess = true{EXPOSURE_NOTE}", "public_access_possible")
+                elif state is None:
+                    add("AZURE_STORAGE_PUBLIC_UNRESOLVED", ref,
+                        "azapi: allowBlobPublicAccess 값을 확인할 수 없음 (검토 필요)", "undetermined")
+            else:
+                value = props.get("publicAccess")
+                if value is None:
+                    return                              # 새 컨테이너 기본값은 비공개
+                if is_unresolved(value):
+                    add("AZURE_STORAGE_PUBLIC_UNRESOLVED", ref,
+                        "azapi: publicAccess 값을 확인할 수 없음 (검토 필요)", "undetermined")
+                elif string_value(value).lower() in ("blob", "container"):
+                    add("AZURE_STORAGE_CONTAINER_PUBLIC", ref,
+                        f"azapi: 컨테이너 publicAccess = {string_value(value)}{EXPOSURE_NOTE}",
+                        "public_access_possible")
+                elif string_value(value).lower() != "none":
+                    add("AZURE_STORAGE_PUBLIC_UNRESOLVED", ref,
+                        "azapi: publicAccess 값이 알려진 값이 아님 (검토 필요)", "undetermined")
+        elif typ in TEMPLATE_DEPLOYMENT_TYPES:
+            if body.get("template_spec_version_id") is not None:
+                state = "unknown"
+            else:
+                state = template_text_state(body.get("template_content"), azure_ctx["module_dir"])
+            if state != "clear":
+                add("AZURE_STORAGE_UNSUPPORTED", ref, {
+                    "storage": "ARM 템플릿 안의 Storage 계정 설정은 해석하지 않음 (검토 필요)",
+                    "linked": "ARM 템플릿이 연결 템플릿(templateLink)을 불러와 내용을 확인할 수 없음 (검토 필요)",
+                }.get(state, "ARM 템플릿 내용을 확인할 수 없음 (검토 필요)"), "undetermined")
 
     def check_admin_port(ref, body, *cidr_values):
         public = any_public(*cidr_values)
@@ -747,6 +1480,9 @@ def scan_configuration(data, s3_links=None):
                 "분석을 지원하지 않는 GCP 방화벽 정책 규칙 자원 유형(규칙 내용을 확인하지 못함): "
                 + typ + " (검토 필요)")
 
+        # Azure Storage public access (CG-STO-01).
+        check_azure_storage(typ, name, ref, body)
+
         # Azure DB server passwords written as literal Terraform strings.
         if typ.startswith("azurerm_"):
             for password_key in ("administrator_login_password", "administrator_password"):
@@ -758,8 +1494,27 @@ def scan_configuration(data, s3_links=None):
                 string_value(body.get("end_ip_address", "")) == "255.255.255.255"):
                 add("AZURE_WIDE_FIREWALL", ref,
                     "DB 방화벽이 전체 IPv4 범위를 허용함")
-            if string_value(body.get("minimum_tls_version", "")) in ("1.0", "1.1"):
-                add("AZURE_OLD_TLS", ref, "오래된 TLS 최소 버전(1.0 또는 1.1) 허용")
+            # v3 PR 5: 저장소 계정은 min_tls_version = "TLS1_0"/"TLS1_1" 형식을 쓴다.
+            # 값이 변수·표현식이면 오래된 TLS 를 허용할 수도 있으므로 REVIEW (생략은 판단하지 않음)
+            tls = check_tls(ref, body.get("minimum_tls_version"), ("1.0", "1.1"),
+                            "오래된 TLS 최소 버전(1.0 또는 1.1) 허용")
+            if tls != "old":
+                tls2 = check_tls(ref, body.get("min_tls_version"), ("TLS1_0", "TLS1_1"),
+                                 "오래된 TLS 최소 버전(TLS1_0 또는 TLS1_1) 허용")
+                if tls2 != "old" and "unknown" in (tls, tls2):
+                    add("AZURE_TLS_UNRESOLVED", ref,
+                        "TLS 최소 버전이 변수·표현식이라 1.0/1.1 허용 여부를 확인할 수 없음 (검토 필요)")
+
+        # azapi 자원의 properties.minimumTlsVersion (Storage·Redis 등 ARM 공통 이름)
+        if typ in AZAPI_TYPES:
+            parsed = azapi_body(body)
+            props = parsed.get("properties") if isinstance(parsed, dict) else None
+            if isinstance(props, dict) and "minimumTlsVersion" in props:
+                tls = check_tls(ref, props["minimumTlsVersion"], ("TLS1_0", "TLS1_1", "1.0", "1.1"),
+                                "azapi: 오래된 TLS 최소 버전(minimumTlsVersion = TLS1_0/TLS1_1) 허용")
+                if tls == "unknown":
+                    add("AZURE_TLS_UNRESOLVED", ref,
+                        "azapi: minimumTlsVersion 이 변수·표현식이라 1.0/1.1 허용 여부를 확인할 수 없음 (검토 필요)")
 
         # Google Cloud project-wide owner role.
         if typ in ("google_project_iam_member", "google_project_iam_binding"):
@@ -780,13 +1535,18 @@ def build_checks(data, findings):
     이 기록이 있어야 나중에 "검사 대상 없음(N/A)"과 "검사했고 문제 없음(PASS)"을 구분할 수 있다.
     """
     checks = []
-    for typ, name, _body in resources(data):
+    for typ, name, body in resources(data):
         ref = f"{typ}.{name}"
         cloud = cloud_of(typ)
-        for (policy, target_cloud), target_types in POLICY_TARGETS.items():
-            if cloud == target_cloud and (typ in target_types or
+        targets = list(POLICY_TARGETS.items()) + [(("CG-STO-01", "azure"), None)]
+        for (policy, target_cloud), target_types in targets:
+            if target_types is None:
+                matched = cloud == "azure" and is_azure_storage_check_target(typ, body)
+            else:
+                matched = cloud == target_cloud and (typ in target_types or
                     (policy == "CG-NET-01" and cloud == "gcp" and
-                     is_other_gcp_firewall_policy_rule_type(typ))):
+                     is_other_gcp_firewall_policy_rule_type(typ)))
+            if matched:
                 status = worst(f["verdict"] for f in findings
                                if f["resource"] == ref and f["policy"] == policy)
                 checks.append({"resource": ref, "cloud": cloud,
@@ -806,6 +1566,41 @@ def scan_file(path):
     파일 하나만 보고 판단하므로, S3 버킷과 공개 차단 설정은 같은 파일 안에서만 연결을 찾는다.
     """
     return scan_configuration(load_tf(path))
+
+
+def scan_paths(tf_files):
+    """.tf 파일 목록을 검사해 파일별 결과 목록을 돌려준다 (v3 PR 5에서 main 에서 분리, 동작 동일).
+
+    1단계: 모든 파일을 먼저 읽는다 (S3 버킷과 공개 차단 설정, Storage 계정과 컨테이너가
+           다른 파일에 있을 수 있음)
+    2단계: 폴더(모듈)별로 Azure Storage 색인과 azurerm 버전 판단을 만든다
+    3단계: 파일별로 검사한다
+    """
+    parsed, errors = {}, {}
+    for path in tf_files:
+        try:
+            parsed[path] = load_tf(path)
+        except Exception as exc:
+            errors[path] = f"{type(exc).__name__}: {exc}"  # Fail closed: never a PASS.
+    s3_links = collect_s3_links(parsed.values())
+
+    by_dir = {}
+    for path, data in parsed.items():
+        by_dir.setdefault(path.parent, []).append(data)
+    versions = resolve_version_contexts(by_dir) if by_dir else {}
+    azure_ctx = {d: make_azure_context(datas, versions[d], d) for d, datas in by_dir.items()}
+
+    results = []
+    for path in tf_files:
+        if path in errors:
+            findings, checks, status, error = [], [], "ERROR", errors[path]
+        else:
+            findings = scan_configuration(parsed[path], s3_links, azure_ctx[path.parent])
+            checks = build_checks(parsed[path], findings)
+            status, error = file_status(findings), None
+        results.append({"file": str(path), "status": status,
+                        "findings": findings, "checks": checks, "error": error})
+    return results
 
 
 def main():
@@ -828,26 +1623,9 @@ def main():
         print("[ERROR] python-hcl2 설치 필요: py -m pip install -r requirements.txt")
         return 2
 
-    # 1단계: 모든 파일을 먼저 읽는다 (S3 버킷과 공개 차단 설정이 다른 파일에 있을 수 있음)
-    parsed, errors = {}, {}
-    for path in tf_files:
-        try:
-            parsed[path] = load_tf(path)
-        except Exception as exc:
-            errors[path] = f"{type(exc).__name__}: {exc}"  # Fail closed: never a PASS.
-    s3_links = collect_s3_links(parsed.values())
-
-    # 2단계: 파일별로 검사한다
-    results = []
-    for path in tf_files:
-        if path in errors:
-            findings, checks, status, error = [], [], "ERROR", errors[path]
-        else:
-            findings = scan_configuration(parsed[path], s3_links)
-            checks = build_checks(parsed[path], findings)
-            status, error = file_status(findings), None
-        results.append({"file": str(path), "status": status,
-                        "findings": findings, "checks": checks, "error": error})
+    results = scan_paths(tf_files)
+    for result in results:
+        status, path, findings, error = result["status"], result["file"], result["findings"], result["error"]
         print(f"[{status}] {path}")
         for finding in findings:
             tag = finding["cloud"] + (f"/{finding['policy']}" if finding["policy"] else "")
