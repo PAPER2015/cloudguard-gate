@@ -3,6 +3,11 @@
 #   0) 단위 테스트 + 검사기 자가 점검 (self_test.py) → 예시 결과가 정답표와 다르면 "검사기 고장"으로 중단
 #   1) 보안 검사 (policy_gate.py)     → infra/에 BLOCK이 있으면 빨간 X로 멈춤
 #   2) 모의 배포 (mock-deploy)         → 0, 1번을 모두 통과했을 때만 실행 (실제 클라우드 배포 없음)
+#   3) 멀티클라우드 통합 검증 (v3 PR 6) → 시나리오 A~G 를 각각 게이트에 넣어,
+#      정상은 모의 배포까지 가고 위험·판정 불가·문법 오류는 배포 전에 멈추는지 확인
+#
+# 필수 검사(브랜치 보호)에 등록할 이름: "1. 보안 정책 검사", "2. 모의 배포", "3. 멀티클라우드 통합 검증"
+# 작업 이름을 바꾸면 필수 검사가 "대기 중"에 멈추므로 바꾸지 않는다 (tests/test_workflow.py 가 확인).
 
 name: CloudGuard Policy Gate
 
@@ -11,22 +16,17 @@ on:
     paths:
       - "infra/**"
       - "samples/**"
+      - "scenarios/**"
+      - "tools/**"
       - "policy_gate.py"
       - "self_test.py"
       - "tests/**"
       - "summary.py"
       - "requirements.txt"
       - ".github/workflows/policy-gate.yml"
+  # pull_request 에는 paths 필터를 두지 않는다 (v3 PR 6).
+  # 필터가 있으면 README 만 바꾼 PR 에서 워크플로가 아예 돌지 않아 필수 검사가 "대기 중"으로 남는다.
   pull_request:
-    paths:
-      - "infra/**"
-      - "samples/**"
-      - "policy_gate.py"
-      - "self_test.py"
-      - "tests/**"
-      - "summary.py"
-      - "requirements.txt"
-      - ".github/workflows/policy-gate.yml"
   workflow_dispatch:   # Actions 탭에서 "Run workflow" 버튼으로 수동 실행도 가능
 
 jobs:
@@ -35,10 +35,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 코드 내려받기
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 파이썬 준비
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -60,7 +60,7 @@ jobs:
 
       - name: 검사 결과 JSON 보관
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: policy-gate-results
           path: results.json
@@ -76,3 +76,80 @@ jobs:
           echo "검사기 자가 점검과 보안 정책 검사를 모두 통과했습니다."
           echo "실제 프로젝트라면 이 자리에서 terraform apply 로 배포합니다."
           echo "## ✅ 모의 배포 완료" >> "$GITHUB_STEP_SUMMARY"
+
+  scenario:
+    name: 통합 시나리오 (${{ matrix.scenario }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false   # 하나가 실패해도 7개 모두 실행해 결과를 남긴다
+      matrix:
+        scenario: [A_all_pass, B_aws_risk, C_azure_risk, D_gcp_risk, E_all_risk, F_review, G_syntax_error]
+    steps:
+      - name: 코드 내려받기
+        uses: actions/checkout@v5
+
+      - name: 파이썬 준비
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: 필요한 라이브러리 설치
+        run: pip install -r requirements.txt
+
+      - name: 정책 게이트 (위험 시나리오는 여기서 실패하는 것이 정상)
+        id: gate
+        continue-on-error: true   # 실패해도 다음 단계에서 "기대한 실패인지" 판정한다
+        run: |
+          set +e
+          python policy_gate.py "scenarios/${{ matrix.scenario }}" --json gate-results.json
+          code=$?
+          echo "$code" > gate-exit.txt
+          exit $code
+
+      - name: 모의 배포 (게이트 통과 시에만 실행)
+        id: deploy
+        if: steps.gate.outcome == 'success'   # 실제 "2. 모의 배포" 작업과 같은 조건
+        run: echo "모의 배포 ${{ matrix.scenario }} — 실제 클라우드에는 아무것도 만들지 않음"
+
+      - name: 기대 동작 확인 (판정·규칙·checks·게이트 결과·배포 실행 여부)
+        if: always()
+        run: >-
+          python tools/check_scenario.py verify "${{ matrix.scenario }}"
+          --results gate-results.json --exit-file gate-exit.txt
+          --gate-outcome "${{ steps.gate.outcome }}" --deploy-outcome "${{ steps.deploy.outcome }}"
+          --out "scenario-result-${{ matrix.scenario }}.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 시나리오 결과 보관
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: scenario-result-${{ matrix.scenario }}
+          path: scenario-result-${{ matrix.scenario }}.json
+          if-no-files-found: ignore
+
+  scenario-summary:
+    name: 3. 멀티클라우드 통합 검증
+    needs: scenario
+    if: always()   # 매트릭스가 실패해도 이 작업은 실행되어 "실패"를 기록한다 (생략되면 필수 검사가 통과로 보일 수 있음)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 내려받기
+        uses: actions/checkout@v5
+
+      - name: 파이썬 준비
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: 시나리오 결과 모으기
+        continue-on-error: true   # 결과가 하나도 없어도 아래 단계가 "결과 없음"으로 실패 처리
+        uses: actions/download-artifact@v7
+        with:
+          pattern: scenario-result-*
+          path: scenario-results
+          merge-multiple: true
+
+      - name: 7개 시나리오 최종 판정
+        run: >-
+          python tools/check_scenario.py aggregate scenario-results
+          --needs-result "${{ needs.scenario.result }}" >> "$GITHUB_STEP_SUMMARY"
