@@ -15,6 +15,7 @@ Markdown 표를 표준 출력에 쓴다 (Actions 에서는 Summary 로 보냄).
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -103,15 +104,17 @@ def table(rows):
 
 
 def run_local(name):
-    """Actions 매트릭스 작업을 흉내: 게이트 실행 → 성공일 때만 모의 배포 → 기대 동작 확인."""
-    out = Path("/tmp") / f"cg-scenario-{name}.json"
-    if out.exists():
-        out.unlink()
-    proc = subprocess.run([sys.executable, "policy_gate.py", f"scenarios/{name}", "--json", str(out)],
-                          cwd=ROOT, capture_output=True, text=True)
-    gate = "success" if proc.returncode == 0 else "failure"
-    deploy = "success" if gate == "success" else "skipped"
-    return verify(name, out, proc.returncode, gate, deploy)
+    """Actions 매트릭스 작업을 흉내: 게이트 실행 → 성공일 때만 모의 배포 → 기대 동작 확인.
+
+    v3.2: 결과 파일은 실행마다 새로 만드는 임시 폴더에 둔다 (예전 /tmp 고정 이름은 동시 실행 시 서로 덮어씀).
+    """
+    with tempfile.TemporaryDirectory(prefix="cg-scenario-") as tmp:
+        out = Path(tmp) / f"{name}.json"
+        proc = subprocess.run([sys.executable, "policy_gate.py", f"scenarios/{name}", "--json", str(out)],
+                              cwd=ROOT, capture_output=True, text=True)
+        gate = "success" if proc.returncode == 0 else "failure"
+        deploy = "success" if gate == "success" else "skipped"
+        return verify(name, out, proc.returncode, gate, deploy)
 
 
 def main(argv):
