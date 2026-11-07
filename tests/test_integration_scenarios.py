@@ -8,6 +8,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -28,11 +29,13 @@ EXPECTED = check_scenario.load_expected()
 
 
 def summary_of(name):
-    out = Path("/tmp") / f"cg-test-{name}.json"
-    subprocess.run([sys.executable, "policy_gate.py", f"scenarios/{name}", "--json", str(out)],
-                   cwd=ROOT, capture_output=True, text=True)
-    return subprocess.run([sys.executable, "summary.py", str(out)], cwd=ROOT, capture_output=True,
-                          text=True).stdout
+    # v3.2: 실행마다 새 임시 폴더 (예전 /tmp 고정 이름은 테스트를 동시에 돌리면 서로 덮어씀)
+    with tempfile.TemporaryDirectory(prefix="cg-test-") as tmp:
+        out = Path(tmp) / f"{name}.json"
+        subprocess.run([sys.executable, "policy_gate.py", f"scenarios/{name}", "--json", str(out)],
+                       cwd=ROOT, capture_output=True, text=True)
+        return subprocess.run([sys.executable, "summary.py", str(out)], cwd=ROOT, capture_output=True,
+                              text=True).stdout
 
 
 @unittest.skipIf(hcl2 is None, "python-hcl2 미설치")

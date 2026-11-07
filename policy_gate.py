@@ -30,9 +30,15 @@ v3.1 (탐지 누락 수정, 기존 판정·종료 코드·결과 구조는 그�
   - CG-NET-01: aws_security_group_rule(type=ingress) 검사 추가 — 다른 표현 방식과 같은 판정
   - CG-NET-01: aws_security_group 의 ingress 전체가 변수·for 식이거나 dynamic "ingress" 이면 REVIEW
   - 폴더 안의 Terraform JSON 구성 파일(.tf.json)을 찾아 ERROR — .tf 와 섞여 있어도 무시하지 않음
+v3.2 (CG-NET-01 출발지 판단 정확도, 기존 판정·종료 코드·결과 구조·규칙 ID 는 그대로):
+  - ipaddress 로 정규화: 0::/0 같은 다른 표기, ::ffff:0:0/96(IPv4-mapped)도 인터넷 전체 (AWS·Azure·GCP)
+  - 규칙 하나의 출발지 목록을 합쳐 판단: ["0.0.0.0/1", "128.0.0.0/1"] = 인터넷 전체 (AWS·Azure·GCP)
+  - AWS: 같은 보안그룹의 여러 인바운드 규칙 출발지를 합쳐 판단 (대상·방향·포트·프로토콜·IP 종류가 같을 때만)
+    확인할 수 없는 값이 섞여야만 전체가 되면 REVIEW, 다른 폴더의 같은 리터럴 sg ID 도 REVIEW
 """
 
 import argparse
+import ipaddress
 import json
 import re
 import sys
@@ -117,9 +123,9 @@ POLICY_TARGETS = {
 # 자원 목록은 policy_support_resources() 가 POLICY_TARGETS·Azure 판단과 같은 출처에서 계산한다
 # (표와 실제 검사 대상이 어긋나지 않게 — tests/test_summary_matrix.py 가 확인).
 POLICY_SUPPORT = {
-    ("CG-NET-01", "aws"): "보안 그룹 인바운드 규칙(인라인·ingress_rule·security_group_rule). dynamic·목록 변수는 REVIEW, 나가는 규칙은 범위 밖. 접두사 목록·NACL·WAF 는 보지 않음",
-    ("CG-NET-01", "azure"): "NSG 규칙만. Azure Firewall·서비스 태그 세부 범위는 보지 않음",
-    ("CG-NET-01", "gcp"): "VPC 방화벽·방화벽 정책 규칙 3종. *_with_rules 등 다른 규칙 형식·주소 그룹은 REVIEW",
+    ("CG-NET-01", "aws"): "보안 그룹 인바운드 규칙(인라인·ingress_rule·security_group_rule). 같은 보안그룹 규칙의 출발지는 합쳐서 판단. dynamic·목록 변수는 REVIEW, 나가는 규칙은 범위 밖. 접두사 목록·NACL·WAF 는 보지 않음",
+    ("CG-NET-01", "azure"): "NSG 규칙만 (규칙 하나의 출발지 목록만 합쳐 판단, 규칙끼리는 합치지 않음). Azure Firewall·서비스 태그 세부 범위는 보지 않음",
+    ("CG-NET-01", "gcp"): "VPC 방화벽·방화벽 정책 규칙 3종 (규칙 하나의 출발지 목록만 합쳐 판단). *_with_rules 등 다른 규칙 형식·주소 그룹은 REVIEW",
     ("CG-STO-01", "aws"): "버킷·공개 차단·버킷 정책. 계정 수준 공개 차단·ACL 자원은 보지 않음",
     ("CG-STO-01", "azure"): "계정·컨테이너·정적 웹사이트·azapi. ARM 템플릿 안의 값은 REVIEW, 환경 변수 영향 미반영",
     ("CG-STO-01", "gcp"): "버킷 PAP·IAM·ACL·Managed Folder. 조직 정책 실효값 미확인(inherited 는 REVIEW)",
@@ -191,12 +197,55 @@ def is_unresolved(value):
     return isinstance(value, str) and "${" in value
 
 
+# ---------------------------------------------------------------------------
+# 인터넷 전체 출발지 판단 (v3.2)
+# v3.1 까지는 "0.0.0.0/0"·"::/0" 문자열만 알아봤다. 이제 표준 라이브러리 ipaddress 로 정규화해서
+#   - 같은 대역의 다른 표기 (0::/0, 0:0::/0, 0.0.0.0/00 …)
+#   - IPv4-mapped IPv6 표기 (::ffff:0:0/96 — AWS provider 는 IPv4 0.0.0.0/0 으로 받아들임)
+#   - 한 규칙의 목록 안에서 쪼갠 대역이 전체를 덮는 경우 (["0.0.0.0/1", "128.0.0.0/1"])
+# 를 인터넷 전체로 본다. 호스트 비트가 있는 값(10.0.0.1/0)은 provider 가 거부하지만 보수적으로 전체로 본다.
+# 변수·표현식, 주소가 아닌 값(서비스 태그 등)은 여기서 대역으로 치지 않는다 (호출하는 쪽이 따로 처리).
+# ---------------------------------------------------------------------------
+
+_IPV4_ALL = ipaddress.ip_network("0.0.0.0/0")
+_IPV6_ALL = ipaddress.ip_network("::/0")
+_IPV4_MAPPED = ipaddress.ip_network("::ffff:0:0/96")
+
+
+def cidr_network(value):
+    """리터럴 출발지 값 1개 → ip_network. 변수·표현식·주소가 아닌 값은 None."""
+    if not isinstance(value, str) or is_unresolved(value):
+        return None
+    try:
+        network = ipaddress.ip_network(string_value(value).strip(), strict=False)
+    except ValueError:
+        return None
+    if network.version == 6 and network.prefixlen >= 96 and network.subnet_of(_IPV4_MAPPED):
+        mapped = network.network_address.ipv4_mapped
+        network = ipaddress.ip_network(f"{mapped}/{network.prefixlen - 96}")
+    return network
+
+
+def networks_cover_internet(networks):
+    """대역 목록이 IPv4 전체 또는 IPv6 전체를 빈틈없이 덮으면 True (IPv4·IPv6 는 따로 본다)."""
+    for version, everything in ((4, _IPV4_ALL), (6, _IPV6_ALL)):
+        same = [n for n in networks if n.version == version]
+        if same and list(ipaddress.collapse_addresses(same)) == [everything]:
+            return True
+    return False
+
+
+def literal_covers_internet(values):
+    """출발지 값 목록 중 확정된 대역만으로 인터넷 전체가 되면 True."""
+    return networks_cover_internet([n for n in map(cidr_network, values) if n is not None])
+
+
 def public_cidr(value):
     """True = 인터넷 전체 / False = 아님 / None = 확인 불가."""
     if value is None:
         return False
     items = value if isinstance(value, list) else [value]
-    if any(not is_unresolved(v) and string_value(v) in ("0.0.0.0/0", "::/0") for v in items):
+    if literal_covers_internet(items):
         return True
     if any(is_unresolved(v) for v in items):
         return None
@@ -214,23 +263,222 @@ def any_public(*values):
 
 
 def covers_admin_ports(body):
-    """True = 22/3389(또는 전체 포트) 포함 / False = 아님 / None = 확인 불가."""
-    raw_proto = body.get("protocol", body.get("ip_protocol", "tcp"))
-    if is_unresolved(raw_proto):
-        return None
-    proto = string_value(raw_proto).lower()
-    if proto in ("-1", "all"):
+    """True = TCP 22/3389(또는 전체 프로토콜) 포함 / False = 아님 / None = 확인 불가.
+
+    v3.2.1: Azure·GCP 와 같이 TCP(6)와 전체 프로토콜(-1/all)만 관리자 포트로 본다.
+    예전에는 udp 22 나 ICMP(from_port/to_port 가 ICMP type·code)도 숫자 범위만 보고 BLOCK 했다.
+    """
+    states = [aws_port_state(body, port) for port in (22, 3389)]
+    if True in states:
         return True
+    return None if None in states else False
+
+
+# ---------------------------------------------------------------------------
+# 같은 보안그룹의 여러 인바운드 규칙을 합친 출발지 판단 (v3.2, CG-NET-01 · AWS)
+# AWS 보안그룹 규칙은 허용만 있고 거부가 없으므로, 같은 보안그룹에 붙은 규칙들의 출발지를 합친 것이
+# 그 보안그룹의 실제 공개 범위다. 다음이 모두 같을 때만 합친다 (오탐 방지):
+#   대상 보안그룹(같은 리소스 참조 또는 같은 리터럴 sg ID) · 인바운드 · 같은 TCP 관리자 포트(22/3389) 확실히 포함
+#   (v3.2.1: TCP 와 전체 프로토콜만 포함으로 봄 — udp·icmp 규칙은 처음부터 빠짐) · 같은 IP 종류 · 같은 폴더(모듈)
+# 대상·방향·포트·프로토콜을 확인할 수 없는 규칙이 있어야만 전체가 되면 REVIEW.
+# 다른 폴더에서 같은 리터럴 sg ID 에 규칙을 나눠 단 경우도 같은 계정·리전인지 알 수 없어 REVIEW.
+# Azure·GCP 는 거부 규칙·우선순위가 있어 규칙끼리 합치지 않는다 (한 규칙 안의 목록만 합침).
+# ---------------------------------------------------------------------------
+
+_AWS_SG_REFERENCE = re.compile(r"^\$\{aws_security_group\.([A-Za-z0-9_-]+)\.id\}$")
+_AWS_PROTOCOLS = {"-1": "all", "all": "all", "tcp": "tcp", "6": "tcp", "udp": "udp", "17": "udp",
+                  "icmp": "icmp", "1": "icmp", "icmpv6": "icmpv6", "58": "icmpv6"}
+
+
+def aws_protocol_class(body):
+    """프로토콜 → 'all' / 'tcp' / 'udp' / … , 변수·표현식이면 None. 생략은 covers_admin_ports 와 같이 tcp."""
+    raw = body.get("protocol", body.get("ip_protocol", "tcp"))
+    if is_unresolved(raw):
+        return None
+    text = string_value(raw).lower()
+    return _AWS_PROTOCOLS.get(text, text)
+
+
+def aws_port_state(body, port):
+    """이 규칙이 TCP 관리자 포트 하나(22 또는 3389)를 포함하는가? True/False/None."""
+    proto = aws_protocol_class(body)
+    if proto is None:
+        return None
+    if proto == "all":
+        return True
+    if proto != "tcp":
+        return False                    # v3.2.1: udp·icmp·icmpv6·기타 번호는 SSH/RDP(TCP) 노출이 아님
     from_port, to_port = body.get("from_port"), body.get("to_port")
     if is_unresolved(from_port) or is_unresolved(to_port):
         return None
     if from_port is None or to_port is None:
         return False
     try:
-        start, end = int(from_port), int(to_port)
+        return int(from_port) <= port <= int(to_port)
     except (TypeError, ValueError):
-        return None  # 숫자가 아닌 값 → 판단 불가
-    return any(start <= port <= end for port in (22, 3389))
+        return None
+
+
+def aws_group_target(value):
+    """security_group_id → 'aws_security_group.<이름>' / 'id:<sg ID>' / None(확인 불가)."""
+    if value is None:
+        return None
+    if is_unresolved(value):
+        match = _AWS_SG_REFERENCE.match(str(value).strip())
+        return f"aws_security_group.{match.group(1)}" if match else None
+    return "id:" + string_value(value)
+
+
+def aws_ingress_entries(datas, folder=None):
+    """폴더(모듈)의 AWS 인바운드 규칙 목록. 규칙 하나 = 인라인 블록 하나 또는 별도 규칙 리소스 하나."""
+    entries = []
+
+    def entry(ref, body, target, inbound, cidr_values):
+        nets = [n for v in cidr_values for n in [cidr_network(x) for x in as_items(v)] if n is not None]
+        entries.append({"ref": ref, "target": target, "inbound": inbound, "folder": folder,
+                        "proto": aws_protocol_class(body),
+                        "ports": {port: aws_port_state(body, port) for port in ADMIN_PORTS},
+                        "nets": nets})
+
+    for data in datas:
+        for typ, name, body in resources(data):
+            ref = f"{typ}.{name}"
+            if typ == "aws_security_group":
+                for block in blocks(body.get("ingress") or []):
+                    entry(ref, block, ref, True, (block.get("cidr_blocks"), block.get("ipv6_cidr_blocks")))
+            elif typ == "aws_vpc_security_group_ingress_rule":
+                entry(ref, body, aws_group_target(body.get("security_group_id")), True,
+                      (body.get("cidr_ipv4"), body.get("cidr_ipv6")))
+            elif typ == "aws_security_group_rule":
+                inbound = text_state(body.get("type"), {"ingress"}, {"egress"})
+                if inbound is not False:
+                    entry(ref, body, aws_group_target(body.get("security_group_id")), inbound,
+                          (body.get("cidr_blocks"), body.get("ipv6_cidr_blocks")))
+    return entries
+
+
+def _relevant_entries(contributors, version):
+    """인터넷 전체를 덮는 원인 규칙을 고른다 (v3.2.2).
+
+    규칙 R 은 'R 을 빼면 덮지 못하는' 최소 충분 집합(어느 규칙도 뺄 수 없는 덮개)에 한 번이라도 들어갈 때만 원인이다.
+      - 다른 규칙들로 이미 덮인 작은 대역(8.8.8.0/24, 10.0.0.0/8 등)은 어떤 최소 덮개에도 필요 없으므로 제외
+      - 서로 다른 덮개가 여럿이면(절반 2개와 1/4 4개) 그 덮개들의 규칙을 모두 표시 — 하나만 고치면 여전히 공개
+      - 같은 대역을 가진 규칙은 한 묶음 (중복 규칙은 함께 표시)
+    고른 규칙들의 합은 항상 인터넷 전체를 덮는다 (최소 덮개 하나를 통째로 포함하므로).
+
+    판정 방법: 주소 공간을 모든 규칙의 경계로 잘게 나눈 조각마다, 그 조각을 포함하지 않는 다른 규칙들 + R 이
+    전체를 덮는지 본다. 그런 조각이 하나라도 있으면 R 은 어떤 최소 덮개에 반드시 필요하다.
+    """
+    units = {}
+    for e in contributors:
+        key = tuple(ipaddress.collapse_addresses([n for n in e["nets"] if n.version == version]))
+        if key:
+            units.setdefault(key, []).append(e)
+    keys = list(units)
+    spans = {k: [(int(n.network_address), int(n.broadcast_address)) for n in k] for k in keys}
+    top = (1 << (32 if version == 4 else 128)) - 1
+    starts = sorted({0} | {s for k in keys for s, _ in spans[k]} | {e + 1 for k in keys for _, e in spans[k] if e < top})
+
+    def inside(point, key):
+        return any(s <= point <= e for s, e in spans[key])
+
+    relevant = []
+    for key in keys:
+        others = [o for o in keys if o != key]
+        for point in starts:
+            if inside(point, key):
+                rest = [o for o in others if not inside(point, o)]
+                if networks_cover_internet([n for k in rest + [key] for n in k]):
+                    relevant.append(key)
+                    break
+    return [e for k in relevant for e in units[k]]
+
+
+def aws_union_findings(entries, cross_folder=False):
+    """{(폴더, 자원 참조): {(규칙 ID, 사유)}}. cross_folder=True 이면 다른 폴더의 같은 리터럴 sg ID 만 보고 REVIEW 로."""
+    out = {}
+    targets = {e["target"] for e in entries if e["target"] is not None}
+    if cross_folder:
+        targets = {t for t in targets if t.startswith("id:")
+                   and len({e["folder"] for e in entries if e["target"] == t}) > 1}
+    else:
+        targets.add(None)                       # 대상을 알 수 없는 규칙끼리만 합쳐지는 경우
+
+    def nets_of(group, version):
+        return [n for e in group for n in e["nets"] if n.version == version]
+
+    def label(target):
+        return "대상 확인 불가" if target is None else target[3:] if target.startswith("id:") else target
+
+    for target in targets:
+        for port in ADMIN_PORTS:
+            for version in (4, 6):
+                def matches(e, strict):
+                    same_target = e["target"] == target or (not strict and not cross_folder
+                                                            and e["target"] is None)
+                    ok = (lambda v: v is True) if strict else (lambda v: v is not False)
+                    # v3.2.1: 프로토콜은 포트 판단에 들어 있다 — TCP·전체 프로토콜만 True, udp·icmp 등은 False,
+                    # 변수면 None (aws_port_state). 그래서 따로 프로토콜끼리 나눌 필요가 없다.
+                    return same_target and ok(e["inbound"]) and ok(e["ports"][port])
+
+                definite = [e for e in entries if matches(e, True) and nets_of([e], version)]
+                possible = [e for e in entries if matches(e, False) and nets_of([e], version)]
+                if cross_folder:
+                    # v3.2.2: 혼자서 이미 전체를 덮는 폴더는 그 폴더 안에서 판정된다 — 빼고, 남은 폴더들이
+                    # 서로 합쳐야만 전체가 될 때만 교차 폴더 REVIEW (다른 폴더의 작은 규칙이 붙어 REVIEW 가 생기지 않게)
+                    alone = {f for f in {e["folder"] for e in possible}
+                             if networks_cover_internet(nets_of([e for e in possible if e["folder"] == f], version))}
+                    possible = [e for e in possible if e["folder"] not in alone]
+                family = "IPv4" if version == 4 else "IPv6"
+                # v3.2.2: 확정 규칙만으로 전체가 되는지를 먼저 본다. 불확정 규칙이 더해져도 확정 BLOCK 은 그대로.
+                # (v3.2.1 은 불확정 규칙 하나가 혼자 0.0.0.0/0 이면 묶음 전체를 건너뛰어 BLOCK 이 REVIEW 로 낮아졌다)
+                if not cross_folder and target is not None and networks_cover_internet(nets_of(definite, version)):
+                    flagged = _relevant_entries(definite, version)
+                    rule, why = "AWS_PUBLIC_ADMIN_PORT", (
+                        f"같은 보안그룹({label(target)})의 인바운드 규칙을 합치면 "
+                        f"출발지가 인터넷 전체({family})이고 {port}번 포트가 열림")
+                elif networks_cover_internet(nets_of(possible, version)):
+                    flagged = _relevant_entries(possible, version)
+                    rule = "AWS_ADMIN_PORT_UNRESOLVED"
+                    why = (f"다른 폴더(모듈)에서 같은 보안그룹 ID({label(target)})에 단 규칙을 합치면 "
+                           f"인터넷 전체({family})에 {port}번 포트가 열림 — 같은 계정·리전인지 확인 필요 (검토 필요)"
+                           if cross_folder else
+                           f"대상 보안그룹·방향·포트·프로토콜을 확인할 수 없는 규칙을 합치면 인터넷 전체({family})에 "
+                           f"{port}번 포트가 열릴 수 있음 (검토 필요)")
+                else:
+                    continue
+                # 혼자 이미 전체인 규칙은 개별 판정(BLOCK/REVIEW)으로 이미 잡혀 있다 — 합산 결과로 다시 적지 않는다
+                flagged = [e for e in flagged if not networks_cover_internet(nets_of([e], version))]
+                if not flagged:
+                    continue
+                pieces = " + ".join(f"{e['ref']} " + ",".join(str(n) for n in e["nets"] if n.version == version)
+                                    for e in flagged)
+                for e in flagged:
+                    out.setdefault((e["folder"], e["ref"]), set()).add((rule, f"{why}: {pieces}"))
+    return out
+
+
+def merge_union_findings(items):
+    """한 자원의 합산 결과들 → (규칙 ID, 사유) 하나. BLOCK 이 있으면 BLOCK 만, 사유는 중복 없이 이어 붙임 (v3.2.1)."""
+    if not items:
+        return None
+    rule = "AWS_PUBLIC_ADMIN_PORT" if any(r == "AWS_PUBLIC_ADMIN_PORT" for r, _ in items) \
+        else "AWS_ADMIN_PORT_UNRESOLVED"
+    reasons = sorted({why for r, why in items if r == rule})
+    return rule, " / ".join(reasons)
+
+
+def make_aws_context(datas, folder=None):
+    """같은 폴더(모듈)의 보안그룹 규칙 합산 결과 (v3.2). 없으면 scan_configuration 이 파일 하나로 만든다."""
+    entries = aws_ingress_entries(datas, folder)
+    return {"folder": folder, "entries": entries, "union": aws_union_findings(entries)}
+
+
+def add_cross_folder_aws_union(aws_ctx):
+    """다른 폴더(모듈)의 같은 리터럴 sg ID 규칙 합산 → 각 폴더 문맥에 REVIEW 를 더한다 (v3.2)."""
+    everything = [e for ctx in aws_ctx.values() for e in ctx["entries"]]
+    for (folder, ref), items in aws_union_findings(everything, cross_folder=True).items():
+        aws_ctx[folder]["union"].setdefault((folder, ref), set()).update(items)
 
 
 def is_literal_secret(value):
@@ -392,6 +640,8 @@ def azure_source_public(rule):
         return False if rule.get("source_application_security_group_ids") else None
     if any(not is_unresolved(v) and string_value(v).lower() in AZURE_PUBLIC_SOURCES for v in values):
         return True
+    if literal_covers_internet(values):          # v3.2: 다른 표기·한 규칙 안의 분할 대역
+        return True
     if any(is_unresolved(v) for v in values):
         return None
     return False
@@ -459,7 +709,7 @@ def evaluate_azure_rule(rule):
 #   - allow의 ports를 생략하면 그 프로토콜의 모든 포트
 # ---------------------------------------------------------------------------
 
-GCP_PUBLIC_RANGES = {"0.0.0.0/0", "::/0"}
+# 인터넷 전체 출발지 판단은 literal_covers_internet() (v3.2 에서 GCP_PUBLIC_RANGES 문자열 비교를 대체)
 GCP_TCP_PROTOCOLS = {"tcp", "6"}   # 6 = TCP의 IP 프로토콜 번호
 
 
@@ -497,10 +747,9 @@ def gcp_source_public(body):
     """
     ranges = body.get("source_ranges")
     if ranges is not None and not isinstance(ranges, list):
-        return None if is_unresolved(ranges) else (
-            True if string_value(ranges) in GCP_PUBLIC_RANGES else False)
+        return None if is_unresolved(ranges) else literal_covers_internet([ranges])
     items = ranges or []
-    if any(not is_unresolved(r) and string_value(r) in GCP_PUBLIC_RANGES for r in items):
+    if literal_covers_internet(items):           # v3.2: 다른 표기·한 규칙 안의 분할 대역
         return True
     if any(is_unresolved(r) for r in items):
         return None
@@ -611,8 +860,7 @@ def gcp_policy_public_source(match):
         return None
     if any("src_secure_tags" in dyn for dyn in blocks(match.get("dynamic", []))):
         return None
-    if any(not is_unresolved(v) and isinstance(v, str)
-           and string_value(v) in GCP_PUBLIC_RANGES for v in items):
+    if literal_covers_internet(items):           # v3.2: 다른 표기·한 규칙 안의 분할 대역
         return True
     if any(is_unresolved(v) or not isinstance(v, str) for v in items):
         return None
@@ -1445,7 +1693,7 @@ def gcp_exposure(principals, level_known, bucket, acl=False):
 # 검사 규칙
 # ---------------------------------------------------------------------------
 
-def scan_configuration(data, s3_links=None, azure_ctx=None, gcp_ctx=None):
+def scan_configuration(data, s3_links=None, azure_ctx=None, gcp_ctx=None, aws_ctx=None):
     """Return rule violations (BLOCK) and undecidable items (REVIEW) for a parsed HCL document.
 
     azure_ctx: 같은 폴더(모듈)의 Azure Storage 색인과 azurerm 버전 판단 (make_azure_context).
@@ -1458,7 +1706,20 @@ def scan_configuration(data, s3_links=None, azure_ctx=None, gcp_ctx=None):
         azure_ctx = make_azure_context([data])
     if gcp_ctx is None:
         gcp_ctx = make_gcp_context([data])
+    if aws_ctx is None:                                  # v3.2: 같은 보안그룹 규칙 합산
+        aws_ctx = make_aws_context([data])
     findings = []
+
+    def add_aws_union(ref):
+        # v3.2.1: 자원 하나에 합산 판정은 한 번만. 개별 판정이 이미 같은 규칙 ID 나 BLOCK 이면 덧붙이지 않는다.
+        merged = merge_union_findings(aws_ctx["union"].get((aws_ctx["folder"], ref), ()))
+        if merged is None:
+            return
+        rule, reason = merged
+        mine = {f["rule"] for f in findings if f["resource"] == ref}
+        if rule in mine or (rule == "AWS_ADMIN_PORT_UNRESOLVED" and "AWS_PUBLIC_ADMIN_PORT" in mine):
+            return
+        add(rule, ref, reason)
 
     def add(rule, resource, reason, exposure=None):
         meta = RULES[rule]
@@ -1808,13 +2069,16 @@ def scan_configuration(data, s3_links=None, azure_ctx=None, gcp_ctx=None):
             for ingress in blocks(inline or []):
                 check_admin_port(ref, ingress,
                                  ingress.get("cidr_blocks"), ingress.get("ipv6_cidr_blocks"))
+            add_aws_union(ref)
         if typ == "aws_vpc_security_group_ingress_rule":
             check_admin_port(ref, body, body.get("cidr_ipv4"), body.get("cidr_ipv6"))
+            add_aws_union(ref)
         # v3.1: 예전 방식의 별도 규칙. type = "ingress" 이면 위와 같은 판정, "egress" 이면 범위 밖,
         # 그 외(변수·생략·처음 보는 값)는 방향을 알 수 없으므로 위험해 보이면 REVIEW.
         if typ == "aws_security_group_rule":
             check_admin_port(ref, body, body.get("cidr_blocks"), body.get("ipv6_cidr_blocks"),
                              inbound=text_state(body.get("type"), {"ingress"}, {"egress"}))
+            add_aws_union(ref)
 
         # Azure NSG allows public SSH/RDP (CG-NET-01).
         if typ == "azurerm_network_security_rule":
@@ -2024,6 +2288,9 @@ def scan_paths(tf_files):
     versions = resolve_version_contexts(by_dir) if by_dir else {}
     azure_ctx = {d: make_azure_context(datas, versions[d], d) for d, datas in by_dir.items()}
     gcp_ctx = {d: make_gcp_context(datas, d) for d, datas in by_dir.items()}
+    # v3.2: 같은 폴더의 보안그룹 규칙 합산 + 다른 폴더의 같은 리터럴 sg ID (REVIEW)
+    aws_ctx = {d: make_aws_context(datas, d) for d, datas in by_dir.items()}
+    add_cross_folder_aws_union(aws_ctx)
 
     results = []
     for path in tf_files:
@@ -2031,7 +2298,7 @@ def scan_paths(tf_files):
             findings, checks, status, error = [], [], "ERROR", errors[path]
         else:
             findings = scan_configuration(parsed[path], s3_links[path.parent], azure_ctx[path.parent],
-                                          gcp_ctx[path.parent])
+                                          gcp_ctx[path.parent], aws_ctx[path.parent])
             checks = build_checks(parsed[path], findings)
             status, error = file_status(findings), None
         results.append({"file": str(path), "status": status,
